@@ -110,7 +110,10 @@ func freeBytes(dir string) uint64 {
 	if err := syscall.Statfs(dir, &stat); err != nil {
 		return 0
 	}
-	return stat.Bavail * uint64(stat.Bsize)
+	if stat.Bsize <= 0 {
+		return 0
+	}
+	return stat.Bavail * uint64(stat.Bsize) // #nosec G115 -- syscall returned a positive block size.
 }
 
 func fileWritable(path string) bool {
