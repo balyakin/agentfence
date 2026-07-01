@@ -96,7 +96,9 @@ func taskFromCreateRunRequest(req CreateRunRequest, repoRoot string) (string, er
 	if err != nil {
 		return "", errorsx.Wrap(errorsx.CodeValidation, "read task file failed", errorsx.ExitUsage, err)
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 	data, err := io.ReadAll(io.LimitReader(file, maxTaskFileBytes+1))
 	if err != nil {
 		return "", errorsx.Wrap(errorsx.CodeValidation, "read task file failed", errorsx.ExitUsage, err)

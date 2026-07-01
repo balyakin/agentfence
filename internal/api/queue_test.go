@@ -12,7 +12,9 @@ import (
 func TestRunQueueCancelMissing(t *testing.T) {
 	t.Parallel()
 	queue := NewRunQueue(context.Background(), 1, nil, nil, nil)
-	defer queue.Stop()
+	defer func() {
+		_ = queue.Stop()
+	}()
 	if queue.Cancel("missing") {
 		t.Fatalf("missing run cancelled")
 	}

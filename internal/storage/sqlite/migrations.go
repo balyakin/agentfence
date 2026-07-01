@@ -29,7 +29,6 @@ func (s *Store) Migrate(ctx context.Context) error {
 		return err
 	}
 	for _, item := range migrations {
-		item := item
 		if err := s.withTx(ctx, func(txCtx context.Context, tx *sql.Tx) error {
 			var count int
 			if err := tx.QueryRowContext(txCtx, `SELECT COUNT(1) FROM schema_migrations WHERE version = ?`, item.version).Scan(&count); err != nil {

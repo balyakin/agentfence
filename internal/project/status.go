@@ -36,7 +36,7 @@ func ParsePorcelainZ(data []byte) ([]domain.StatusEntry, error) {
 }
 
 func IsDirty(entry domain.StatusEntry) bool {
-	return !(entry.Index == '?' && entry.Worktree == '?') && entry.Index != 'D' && entry.Worktree != 'D'
+	return (entry.Index != '?' || entry.Worktree != '?') && entry.Index != 'D' && entry.Worktree != 'D'
 }
 
 func IsUntracked(entry domain.StatusEntry) bool {

@@ -14,7 +14,11 @@ func TestMigrationsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	defer store.Close()
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Fatalf("close store: %v", err)
+		}
+	})
 	if err := store.Migrate(context.Background()); err != nil {
 		t.Fatalf("migrate second time: %v", err)
 	}

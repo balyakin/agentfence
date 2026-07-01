@@ -21,8 +21,8 @@ func newDaemonCommand(opts *rootOptions) *cobra.Command {
 				return err
 			}
 			defer closeDeps(deps)
-			network := "unix"
-			address := listen
+			var network string
+			var address string
 			tcpMode := false
 			token := ""
 			if listen == "" || listen == "unix" {

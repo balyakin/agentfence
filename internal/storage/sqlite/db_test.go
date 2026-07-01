@@ -15,7 +15,11 @@ func TestOpenChmodsDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	defer store.Close()
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Fatalf("close store: %v", err)
+		}
+	})
 	info, err := os.Stat(filepath.Join(filepath.Dir(storePath(t, store)), "agentfence.db"))
 	if err != nil {
 		t.Fatalf("stat db: %v", err)

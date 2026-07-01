@@ -40,7 +40,6 @@ func TestInvalidConfig(t *testing.T) {
 		"version: 1\napply_on_success: true\n",
 	}
 	for _, input := range tests {
-		input := input
 		t.Run(strings.Split(input, "\n")[1], func(t *testing.T) {
 			t.Parallel()
 			if _, err := LoadBytes(context.Background(), []byte(input)); err == nil {

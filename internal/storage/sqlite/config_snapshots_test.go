@@ -11,7 +11,6 @@ import (
 func TestSaveConfigSnapshot(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t)
-	defer store.Close()
 	run := testRun("snapshot", domain.RunStatusSucceeded, time.Now().UTC())
 	if err := store.CreateRun(context.Background(), run); err != nil {
 		t.Fatalf("create run: %v", err)

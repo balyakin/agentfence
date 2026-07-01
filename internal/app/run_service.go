@@ -306,12 +306,11 @@ func (s *RunService) Run(ctx context.Context, req domain.RunRequest) (domain.Run
 	code := ""
 	message := ""
 	var resultErr error
-	exitCode := errorsx.ExitInternal
 	if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
 		status = domain.RunStatusCancelled
 		code = errorsx.CodeCancelled
 		message = "run cancelled"
-		exitCode = errorsx.ExitCancelled
+		exitCode := errorsx.ExitCancelled
 		if errors.Is(runErr, context.DeadlineExceeded) {
 			status = domain.RunStatusTimedOut
 			code = errorsx.CodeTimeout

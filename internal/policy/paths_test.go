@@ -23,7 +23,6 @@ func TestSafeJoin(t *testing.T) {
 		{name: "nul", path: "a\x00b", wantErr: true},
 	}
 	for _, testCase := range tests {
-		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 			_, err := SafeJoin("/repo", testCase.path)

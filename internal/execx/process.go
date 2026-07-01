@@ -62,7 +62,7 @@ func (r *ProcessRunner) Run(ctx context.Context, req ProcessRequest) (ProcessRes
 	pgid, err := syscall.Getpgid(cmd.Process.Pid)
 	if err != nil {
 		_ = cmd.Process.Kill()
-		_ = <-waitCh
+		<-waitCh
 		return ProcessResult{}, fmt.Errorf("get process group: %w", err)
 	}
 

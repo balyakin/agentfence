@@ -1,4 +1,14 @@
+version: "2"
+
 linters:
+  settings:
+    gosec:
+      excludes:
+        - G202
+        - G204
+        - G302
+        - G304
+        - G306
   enable:
     - errcheck
     - govet

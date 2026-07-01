@@ -14,7 +14,6 @@ import (
 func TestResolveLatestIgnoresActive(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t)
-	defer store.Close()
 	now := time.Now().UTC()
 	active := testRun("active", domain.RunStatusRunning, now)
 	done := testRun("done", domain.RunStatusSucceeded, now.Add(time.Second))
@@ -39,6 +38,11 @@ func openTestStore(t *testing.T) *Store {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Fatalf("close store: %v", err)
+		}
+	})
 	return store
 }
 
