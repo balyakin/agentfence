@@ -1,0 +1,11 @@
+[
+  {
+    "Description": "Generic API Key",
+    "StartLine": 1,
+    "StartColumn": 1,
+    "RuleID": "generic-api-key",
+    "File": "secret.txt",
+    "Secret": "fixture-secret-placeholder-0000",
+    "Fingerprint": "secret.txt:generic-api-key:1"
+  }
+]

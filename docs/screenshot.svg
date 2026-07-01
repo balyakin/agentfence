@@ -1,0 +1,43 @@
+<svg width="1280" height="720" viewBox="0 0 1280 720" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">AgentFence terminal preview</title>
+  <desc id="desc">A terminal-style preview of running AgentFence, reviewing a diff, and applying a patch on a branch.</desc>
+  <rect width="1280" height="720" fill="#111827"/>
+  <rect x="70" y="52" width="1140" height="616" rx="16" fill="#0B1020" stroke="#263244" stroke-width="2"/>
+  <rect x="70" y="52" width="1140" height="54" rx="16" fill="#182033"/>
+  <rect x="70" y="88" width="1140" height="18" fill="#182033"/>
+  <circle cx="101" cy="79" r="8" fill="#F87171"/>
+  <circle cx="128" cy="79" r="8" fill="#FBBF24"/>
+  <circle cx="155" cy="79" r="8" fill="#34D399"/>
+  <text x="640" y="84" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="15" fill="#B6C2D9">agentfence - shadow run</text>
+
+  <text x="108" y="152" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20" fill="#7DD3FC">$ agentfence run codex --task "Fix failing unit tests"</text>
+  <text x="108" y="193" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#DDE7F7">repo: /work/payments-api</text>
+  <text x="108" y="226" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#DDE7F7">run_id: 01J7V6M7K8H2R4M9Q0Y3N6P1TC</text>
+  <text x="108" y="259" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#DDE7F7">status: succeeded</text>
+  <text x="108" y="292" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#DDE7F7">diff: agentfence diff 01J7V6M7K8H2R4M9Q0Y3N6P1TC</text>
+
+  <text x="108" y="355" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20" fill="#7DD3FC">$ agentfence diff latest --stat</text>
+  <text x="108" y="396" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#DDE7F7">4182 bytes patch</text>
+
+  <text x="108" y="459" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20" fill="#7DD3FC">$ agentfence apply latest --branch</text>
+  <text x="108" y="500" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#DDE7F7">id: 01J7V6M7K8H2R4M9Q0Y3N6P1TC</text>
+  <text x="108" y="533" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#DDE7F7">status: applied</text>
+  <text x="108" y="566" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#DDE7F7">branch: agentfence/01J7V6M7K8H2R4M9Q0Y3N6P1TC</text>
+
+  <rect x="808" y="146" width="336" height="400" rx="10" fill="#111A2E" stroke="#2D3A52"/>
+  <text x="840" y="190" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#E5EEF9">run checks</text>
+  <text x="840" y="238" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" fill="#34D399">ok</text>
+  <text x="884" y="238" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" fill="#DDE7F7">shadow workspace</text>
+  <text x="840" y="276" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" fill="#34D399">ok</text>
+  <text x="884" y="276" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" fill="#DDE7F7">preflight scan</text>
+  <text x="840" y="314" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" fill="#34D399">ok</text>
+  <text x="884" y="314" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" fill="#DDE7F7">bubblewrap sandbox</text>
+  <text x="840" y="352" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" fill="#34D399">ok</text>
+  <text x="884" y="352" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" fill="#DDE7F7">network deny</text>
+  <text x="840" y="390" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" fill="#34D399">ok</text>
+  <text x="884" y="390" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" fill="#DDE7F7">postflight scan</text>
+  <text x="840" y="428" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" fill="#34D399">ok</text>
+  <text x="884" y="428" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" fill="#DDE7F7">review required</text>
+  <line x1="840" y1="466" x2="1112" y2="466" stroke="#2D3A52"/>
+  <text x="840" y="508" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" fill="#93C5FD">agent changed files only</text>
+</svg>

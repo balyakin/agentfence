@@ -1,0 +1,11 @@
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - ineffassign
+    - unused
+    - misspell
+    - gosec
+    - bodyclose
+    - copyloopvar

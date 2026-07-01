@@ -1,0 +1,11 @@
+{
+  "generic-api-key": "high",
+  "aws-access-token": "critical",
+  "aws-secret-access-key": "critical",
+  "private-key": "critical",
+  "slack-access-token": "high",
+  "github-pat": "high",
+  "gitlab-pat": "high",
+  "openai-api-key": "high",
+  "jwt": "medium"
+}
