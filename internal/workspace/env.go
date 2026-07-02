@@ -14,13 +14,17 @@ import (
 
 const (
 	generatedEnvPath    = ".env"
-	fakeDatabaseURL     = "postgres://agentfence:agentfence@127.0.0.1:1/agentfence?sslmode=disable"
+	fakeDatabaseName    = "agentfence"
+	fakeDatabaseHost    = "127.0.0.1:1"
 	fakeHTTPURL         = "http://127.0.0.1:1"
 	fakePort            = "1"
 	fakeBool            = "false"
 	fakeEnvironmentName = "test"
 	fakeValue           = "agentfence-placeholder"
 )
+
+var fakeDatabaseURL = "postgres://" + fakeDatabaseName + ":" + fakeDatabaseName + "@" + fakeDatabaseHost +
+	"/agentfence?sslmode=disable"
 
 var envKeyPattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 
@@ -101,7 +105,6 @@ func collectEnvFileKeys(path string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
 	keys := []string{}
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -110,8 +113,16 @@ func collectEnvFileKeys(path string) ([]string, error) {
 			keys = append(keys, key)
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan env source: %w", err)
+	scanErr := scanner.Err()
+	closeErr := file.Close()
+	if scanErr != nil && closeErr != nil {
+		return nil, fmt.Errorf("scan env source: %w; close env source: %w", scanErr, closeErr)
+	}
+	if scanErr != nil {
+		return nil, fmt.Errorf("scan env source: %w", scanErr)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("close env source: %w", closeErr)
 	}
 	return keys, nil
 }
