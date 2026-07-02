@@ -82,6 +82,13 @@ agent:
   env_allowlist:
     - PATH
     - TERM
+  sanitized_env:
+    enabled: true
+    example_files:
+      - ".env.example"
+      - ".env.template"
+      - ".env.sample"
+    extra_keys: []
   adapters:
     codex:
       command: codex

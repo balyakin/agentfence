@@ -9,7 +9,9 @@ import (
 )
 
 type FakeWorkspace struct {
-	PatchBytes []byte
+	PatchBytes        []byte
+	SanitizedEnv      []string
+	IgnoredPatchPaths []string
 }
 
 func (w *FakeWorkspace) Create(ctx context.Context, req domain.CreateWorkspaceRequest) (domain.WorkspaceResult, error) {
@@ -25,7 +27,16 @@ func (w *FakeWorkspace) Create(ctx context.Context, req domain.CreateWorkspaceRe
 	if err := os.MkdirAll(scanner, 0o700); err != nil {
 		return domain.WorkspaceResult{}, err
 	}
-	return domain.WorkspaceResult{RunDir: req.RunDir, ShadowPath: shadow, LogsDir: logs, ScannerDir: scanner, MetadataPath: filepath.Join(req.RunDir, "shadow_metadata.json"), PatchPath: filepath.Join(req.RunDir, "changes.patch")}, nil
+	return domain.WorkspaceResult{
+		RunDir:            req.RunDir,
+		ShadowPath:        shadow,
+		LogsDir:           logs,
+		ScannerDir:        scanner,
+		MetadataPath:      filepath.Join(req.RunDir, "shadow_metadata.json"),
+		PatchPath:         filepath.Join(req.RunDir, "changes.patch"),
+		SanitizedEnv:      append([]string{}, w.SanitizedEnv...),
+		IgnoredPatchPaths: append([]string{}, w.IgnoredPatchPaths...),
+	}, nil
 }
 
 func (w *FakeWorkspace) GeneratePatch(ctx context.Context, req domain.GeneratePatchRequest) error {

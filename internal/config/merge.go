@@ -58,7 +58,14 @@ type rawAgentConfig struct {
 	Interactive  *bool                            `yaml:"interactive"`
 	AuthMounts   []AuthMount                      `yaml:"auth_mounts"`
 	EnvAllowlist []string                         `yaml:"env_allowlist"`
+	SanitizedEnv *rawSanitizedEnvConfig           `yaml:"sanitized_env"`
 	Adapters     map[string]rawAgentAdapterConfig `yaml:"adapters"`
+}
+
+type rawSanitizedEnvConfig struct {
+	Enabled      *bool    `yaml:"enabled"`
+	ExampleFiles []string `yaml:"example_files"`
+	ExtraKeys    []string `yaml:"extra_keys"`
 }
 
 type rawAgentAdapterConfig struct {
@@ -193,6 +200,8 @@ func cloneConfig(in Config) Config {
 	out.Sandbox.TmpfsPaths = append([]string{}, in.Sandbox.TmpfsPaths...)
 	out.Agent.AuthMounts = append([]AuthMount{}, in.Agent.AuthMounts...)
 	out.Agent.EnvAllowlist = append([]string{}, in.Agent.EnvAllowlist...)
+	out.Agent.SanitizedEnv.ExampleFiles = append([]string{}, in.Agent.SanitizedEnv.ExampleFiles...)
+	out.Agent.SanitizedEnv.ExtraKeys = append([]string{}, in.Agent.SanitizedEnv.ExtraKeys...)
 	if in.Agent.Adapters != nil {
 		out.Agent.Adapters = make(map[string]AgentAdapterConfig, len(in.Agent.Adapters))
 		for name, adapter := range in.Agent.Adapters {
@@ -292,6 +301,9 @@ func mergeAgent(dst *AgentConfig, user rawAgentConfig) {
 	if user.EnvAllowlist != nil {
 		dst.EnvAllowlist = appendUnique(dst.EnvAllowlist, user.EnvAllowlist...)
 	}
+	if user.SanitizedEnv != nil {
+		mergeSanitizedEnv(&dst.SanitizedEnv, *user.SanitizedEnv)
+	}
 	if user.Adapters != nil {
 		if dst.Adapters == nil {
 			dst.Adapters = map[string]AgentAdapterConfig{}
@@ -309,6 +321,18 @@ func mergeAgent(dst *AgentConfig, user rawAgentConfig) {
 			}
 			dst.Adapters[name] = adapter
 		}
+	}
+}
+
+func mergeSanitizedEnv(dst *SanitizedEnvConfig, user rawSanitizedEnvConfig) {
+	if user.Enabled != nil {
+		dst.Enabled = *user.Enabled
+	}
+	if user.ExampleFiles != nil {
+		dst.ExampleFiles = append([]string{}, user.ExampleFiles...)
+	}
+	if user.ExtraKeys != nil {
+		dst.ExtraKeys = appendUnique(dst.ExtraKeys, user.ExtraKeys...)
 	}
 }
 

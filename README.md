@@ -156,6 +156,18 @@ sandbox:
   network: deny
   allow_soft_mode: false
 
+agent:
+  env_allowlist:
+    - PATH
+    - TERM
+  sanitized_env:
+    enabled: true
+    example_files:
+      - ".env.example"
+      - ".env.template"
+      - ".env.sample"
+    extra_keys: []
+
 apply:
   require_clean_tree: true
   create_branch: true
@@ -216,6 +228,8 @@ It aims to protect:
 - The original Git history.
 - Raw secrets in logs, CLI output, API responses, SQLite rows, and audit events.
 - Patch application, which always requires an explicit command.
+
+AgentFence can generate a sanitized `.env` inside the shadow workspace from `.env.example`, `.env.template`, `.env.sample`, and configured key names. It ignores source values, never reads real `.env` files by default, passes generated placeholder values to the agent process, scans the generated file, and excludes it from the final patch.
 
 It does not protect against:
 

@@ -47,7 +47,14 @@ type AgentConfig struct {
 	Interactive  bool                          `yaml:"interactive" json:"interactive"`
 	AuthMounts   []AuthMount                   `yaml:"auth_mounts" json:"auth_mounts" validate:"dive"`
 	EnvAllowlist []string                      `yaml:"env_allowlist" json:"env_allowlist" validate:"dive,envkey"`
+	SanitizedEnv SanitizedEnvConfig            `yaml:"sanitized_env" json:"sanitized_env" validate:"required"`
 	Adapters     map[string]AgentAdapterConfig `yaml:"adapters" json:"adapters" validate:"required,min=1,dive"`
+}
+
+type SanitizedEnvConfig struct {
+	Enabled      bool     `yaml:"enabled" json:"enabled"`
+	ExampleFiles []string `yaml:"example_files" json:"example_files" validate:"dive,min=1"`
+	ExtraKeys    []string `yaml:"extra_keys" json:"extra_keys" validate:"dive,envkey"`
 }
 
 type AuthMount struct {

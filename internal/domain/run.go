@@ -136,21 +136,27 @@ type CreateWorkspaceRequest struct {
 	ExposurePlan ExposurePlan
 	RepoHead     string
 	BaseRef      string
+	SanitizedEnv config.SanitizedEnvConfig
 }
 
 type WorkspaceResult struct {
-	RunDir       string
-	ShadowPath   string
-	ScannerDir   string
-	LogsDir      string
-	MetadataPath string
-	PatchPath    string
+	RunDir              string
+	ShadowPath          string
+	ScannerDir          string
+	LogsDir             string
+	MetadataPath        string
+	PatchPath           string
+	SanitizedEnv        []string
+	SanitizedEnvKeys    []string
+	SanitizedEnvSources []string
+	IgnoredPatchPaths   []string
 }
 
 type GeneratePatchRequest struct {
-	RunDir     string
-	ShadowPath string
-	PatchPath  string
+	RunDir            string
+	ShadowPath        string
+	PatchPath         string
+	IgnoredPatchPaths []string
 }
 
 type SandboxRunRequest struct {

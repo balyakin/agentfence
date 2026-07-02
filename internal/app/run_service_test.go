@@ -66,6 +66,54 @@ func TestRunServiceRegistersScannerRawSecrets(t *testing.T) {
 	}
 }
 
+func TestRunServicePassesSanitizedEnvToSandbox(t *testing.T) {
+	t.Parallel()
+	store := testutil.NewFakeStore()
+	git := &testutil.FakeGit{RepoRoot: "/repo"}
+	agent := &testutil.FakeAgentRegistry{
+		Env: []string{"DATABASE_URL=postgres://real-user:real-pass@127.0.0.1/prod", "TERM=xterm"},
+	}
+	paths := state.Paths{StateDir: t.TempDir(), CacheDir: t.TempDir(), RunsDir: t.TempDir(), LocksDir: t.TempDir()}
+	redactor := execx.NewRedactor()
+	sandbox := &testutil.FakeSandbox{Result: domain.SandboxRunResult{
+		ExitCode:   0,
+		StartedAt:  time.Now(),
+		FinishedAt: time.Now(),
+	}}
+	workspace := &testutil.FakeWorkspace{
+		PatchBytes:        []byte("diff"),
+		SanitizedEnv:      []string{"DATABASE_URL=postgres://agentfence:agentfence@127.0.0.1:1/agentfence?sslmode=disable"},
+		IgnoredPatchPaths: []string{".env"},
+	}
+	service, err := NewRunService(RunServiceDeps{
+		Store: store, Git: git, Policy: policy.NewPlanner(git), Workspace: workspace,
+		Scanners: []ports.Scanner{&testutil.FakeScanner{Result: domain.ScanResult{Status: "clean"}}},
+		Sandbox:  sandbox, Agents: agent, Locks: testutil.FakeLockManager{}, Paths: paths,
+		Redactor: redactor, Logger: slog.Default(), Clock: ports.SystemClock{},
+	})
+	if err != nil {
+		t.Fatalf("service: %v", err)
+	}
+	_, err = service.Run(context.Background(), domain.RunRequest{RepoPath: "/repo", Agent: "fake", Task: "do it"})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(sandbox.Request.Invocation.Env) != 2 {
+		t.Fatalf("env=%v", sandbox.Request.Invocation.Env)
+	}
+	if sandbox.Request.Invocation.Env[0] != "TERM=xterm" {
+		t.Fatalf("env=%v", sandbox.Request.Invocation.Env)
+	}
+	if sandbox.Request.Invocation.Env[1] != workspace.SanitizedEnv[0] {
+		t.Fatalf("env=%v", sandbox.Request.Invocation.Env)
+	}
+	for _, value := range sandbox.Request.Invocation.Env {
+		if strings.Contains(value, "real-user") {
+			t.Fatalf("host env leaked: %v", sandbox.Request.Invocation.Env)
+		}
+	}
+}
+
 func newTestRunService(t *testing.T, scanResult domain.ScanResult) (*RunService, *testutil.FakeStore, *testutil.FakeAgentRegistry, *execx.Redactor) {
 	t.Helper()
 	store := testutil.NewFakeStore()

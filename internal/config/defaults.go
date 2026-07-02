@@ -32,6 +32,14 @@ func DefaultConfig() Config {
 		Agent: AgentConfig{
 			Default:      "codex",
 			EnvAllowlist: []string{"PATH", "TERM"},
+			SanitizedEnv: SanitizedEnvConfig{
+				Enabled: true,
+				ExampleFiles: []string{
+					".env.example",
+					".env.template",
+					".env.sample",
+				},
+			},
 			Adapters: map[string]AgentAdapterConfig{
 				"codex": {
 					Command:  "codex",

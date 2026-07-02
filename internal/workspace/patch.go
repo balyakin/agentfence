@@ -4,12 +4,25 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/agentfence/agentfence/internal/domain"
 )
 
 func (m *Manager) GeneratePatch(ctx context.Context, req domain.GeneratePatchRequest) error {
-	output, err := runGit(ctx, req.ShadowPath, "diff", "--binary", "HEAD")
+	args := []string{"diff", "--binary", "HEAD"}
+	if len(req.IgnoredPatchPaths) > 0 {
+		args = append(args, "--", ".")
+		for _, path := range req.IgnoredPatchPaths {
+			clean, err := cleanIgnoredPatchPath(path)
+			if err != nil {
+				return err
+			}
+			args = append(args, ":(exclude)"+clean)
+		}
+	}
+	output, err := runGit(ctx, req.ShadowPath, args...)
 	if err != nil {
 		return fmt.Errorf("generate git patch: %w", err)
 	}
@@ -31,4 +44,19 @@ func (m *Manager) GeneratePatch(ctx context.Context, req domain.GeneratePatchReq
 		return fmt.Errorf("chmod patch file: %w", err)
 	}
 	return nil
+}
+
+func cleanIgnoredPatchPath(path string) (string, error) {
+	if path == "" || filepath.IsAbs(path) || containsParentSegment(path) {
+		return "", fmt.Errorf("unsafe ignored patch path %q", path)
+	}
+	clean := filepath.Clean(path)
+	slashPath := filepath.ToSlash(clean)
+	if slashPath == "." {
+		return "", fmt.Errorf("unsafe ignored patch path %q", path)
+	}
+	if strings.HasPrefix(slashPath, "/") {
+		return "", fmt.Errorf("unsafe ignored patch path %q", path)
+	}
+	return slashPath, nil
 }

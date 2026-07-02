@@ -85,7 +85,9 @@ func (s *ScanService) Scan(ctx context.Context, req ScanOnlyRequest) (result dom
 			}
 		}()
 	}
-	workspaceResult, err := s.workspace.Create(ctx, domain.CreateWorkspaceRequest{RunID: runID, RepoRoot: repoRoot, RunDir: runDir, ExposurePlan: plan})
+	workspaceResult, err := s.workspace.Create(ctx, domain.CreateWorkspaceRequest{
+		RunID: runID, RepoRoot: repoRoot, RunDir: runDir, ExposurePlan: plan, SanitizedEnv: cfg.Agent.SanitizedEnv,
+	})
 	if err != nil {
 		return domain.ScanResult{}, err
 	}

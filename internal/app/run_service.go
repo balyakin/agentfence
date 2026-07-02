@@ -202,6 +202,7 @@ func (s *RunService) Run(ctx context.Context, req domain.RunRequest) (domain.Run
 	}
 	workspaceResult, err := s.workspace.Create(runCtx, domain.CreateWorkspaceRequest{
 		RunID: runID, RepoRoot: repoRoot, RunDir: runDir, ExposurePlan: plan, RepoHead: repoHead, BaseRef: baseRef,
+		SanitizedEnv: cfg.Agent.SanitizedEnv,
 	})
 	if err != nil {
 		return domain.RunResult{}, fmt.Errorf("create shadow workspace: %w", err)
@@ -231,6 +232,7 @@ func (s *RunService) Run(ctx context.Context, req domain.RunRequest) (domain.Run
 	if err != nil {
 		return domain.RunResult{}, errorsx.Wrap(errorsx.CodeDependencyMissing, "agent command unavailable", errorsx.ExitDependencyMissing, err)
 	}
+	invocation.Env = mergeInvocationEnv(invocation.Env, workspaceResult.SanitizedEnv)
 	stdout, stderr, flush, err := s.openRedactedLogs(workspaceResult.LogsDir)
 	if err != nil {
 		return domain.RunResult{}, err
@@ -278,7 +280,10 @@ func (s *RunService) Run(ctx context.Context, req domain.RunRequest) (domain.Run
 	if err != nil {
 		return domain.RunResult{}, err
 	}
-	if err := s.workspace.GeneratePatch(postCtx, domain.GeneratePatchRequest{RunDir: runDir, ShadowPath: workspaceResult.ShadowPath, PatchPath: patchPath}); err != nil {
+	if err := s.workspace.GeneratePatch(postCtx, domain.GeneratePatchRequest{
+		RunDir: runDir, ShadowPath: workspaceResult.ShadowPath, PatchPath: patchPath,
+		IgnoredPatchPaths: workspaceResult.IgnoredPatchPaths,
+	}); err != nil {
 		return domain.RunResult{}, err
 	}
 	patchScan, err := s.scanPhase(postCtx, cfg, runID, domain.FindingPhasePatch, patchPath, runDir)
@@ -411,6 +416,32 @@ func applyRunOverrides(cfg *config.Config, req domain.RunRequest) {
 	if req.IncludeUntracked {
 		cfg.Workspace.IncludeUntracked = true
 	}
+}
+
+func mergeInvocationEnv(base []string, sanitized []string) []string {
+	if len(sanitized) == 0 {
+		return base
+	}
+	sanitizedKeys := map[string]struct{}{}
+	for _, item := range sanitized {
+		key, _, ok := strings.Cut(item, "=")
+		if ok && key != "" {
+			sanitizedKeys[key] = struct{}{}
+		}
+	}
+	result := make([]string, 0, len(base)+len(sanitized))
+	for _, item := range base {
+		key, _, ok := strings.Cut(item, "=")
+		if !ok {
+			continue
+		}
+		if _, exists := sanitizedKeys[key]; exists {
+			continue
+		}
+		result = append(result, item)
+	}
+	result = append(result, sanitized...)
+	return result
 }
 
 func newULID(now time.Time) (string, error) {

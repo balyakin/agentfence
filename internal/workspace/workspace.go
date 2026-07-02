@@ -52,7 +52,17 @@ func (m *Manager) Create(ctx context.Context, req domain.CreateWorkspaceRequest)
 	if err := initBaseline(ctx, result.ShadowPath); err != nil {
 		return domain.WorkspaceResult{}, err
 	}
-	if err := writeMetadata(result.MetadataPath, req, time.Now().UTC()); err != nil {
+	envResult, err := buildSanitizedEnv(req.RepoRoot, result.ShadowPath, req.SanitizedEnv)
+	if err != nil {
+		return domain.WorkspaceResult{}, err
+	}
+	result.SanitizedEnv = envResult.Env
+	result.SanitizedEnvKeys = envResult.Keys
+	result.SanitizedEnvSources = envResult.SourceFiles
+	if envResult.IgnoredPatchPath != "" {
+		result.IgnoredPatchPaths = append(result.IgnoredPatchPaths, envResult.IgnoredPatchPath)
+	}
+	if err := writeMetadata(result.MetadataPath, req, envResult, time.Now().UTC()); err != nil {
 		return domain.WorkspaceResult{}, err
 	}
 	return result, nil
@@ -179,6 +189,7 @@ type metadata struct {
 	CreatedAt       string               `json:"created_at"`
 	ExposureSummary exposureSummary      `json:"exposure_summary"`
 	SkippedFiles    []domain.SkippedFile `json:"skipped_files"`
+	SanitizedEnv    sanitizedEnvMetadata `json:"sanitized_env"`
 }
 
 type exposureSummary struct {
@@ -186,7 +197,13 @@ type exposureSummary struct {
 	TotalSize int64 `json:"total_size"`
 }
 
-func writeMetadata(path string, req domain.CreateWorkspaceRequest, now time.Time) error {
+type sanitizedEnvMetadata struct {
+	Enabled     bool     `json:"enabled"`
+	Keys        []string `json:"keys"`
+	SourceFiles []string `json:"source_files"`
+}
+
+func writeMetadata(path string, req domain.CreateWorkspaceRequest, envResult sanitizedEnvResult, now time.Time) error {
 	payload := metadata{
 		RepoPath:  req.RepoRoot,
 		RepoHead:  req.RepoHead,
@@ -197,6 +214,11 @@ func writeMetadata(path string, req domain.CreateWorkspaceRequest, now time.Time
 			TotalSize: req.ExposurePlan.TotalSize,
 		},
 		SkippedFiles: req.ExposurePlan.SkippedFiles,
+		SanitizedEnv: sanitizedEnvMetadata{
+			Enabled:     req.SanitizedEnv.Enabled,
+			Keys:        envResult.Keys,
+			SourceFiles: envResult.SourceFiles,
+		},
 	}
 	data, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
