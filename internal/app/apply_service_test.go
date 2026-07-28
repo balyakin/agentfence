@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/agentfence/agentfence/internal/domain"
+	"github.com/agentfence/agentfence/internal/errorsx"
 	"github.com/agentfence/agentfence/internal/ports"
 	"github.com/agentfence/agentfence/internal/testutil"
 )
@@ -40,6 +41,34 @@ func TestApplyServiceAppliesSucceededRun(t *testing.T) {
 	}
 	if !locks.acquired || !locks.released {
 		t.Fatalf("repo lock was not held during apply")
+	}
+}
+
+func TestApplyServiceReportsPostScanBlocked(t *testing.T) {
+	t.Parallel()
+	store := testutil.NewFakeStore()
+	run := domain.Run{
+		ID:             "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+		RepoPath:       "/repo",
+		Status:         domain.RunStatusBlockedPost,
+		PostScanStatus: "blocked",
+	}
+	if err := store.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	service, err := NewApplyService(
+		store,
+		&testutil.FakeGit{RepoRoot: "/repo"},
+		ports.SystemClock{},
+		&applyLockManager{},
+	)
+	if err != nil {
+		t.Fatalf("service: %v", err)
+	}
+	_, err = service.Apply(context.Background(), domain.ApplyRunRequest{RunID: run.ID}, "/repo", "")
+	public, ok := errorsx.IsPublic(err)
+	if !ok || public.Code != errorsx.CodePostScanBlocked {
+		t.Fatalf("error = %v, want %s", err, errorsx.CodePostScanBlocked)
 	}
 }
 

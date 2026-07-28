@@ -72,6 +72,14 @@ func (s *ApplyService) Apply(ctx context.Context, req domain.ApplyRunRequest, re
 	if err != nil {
 		return domain.Run{}, err
 	}
+	if run.Status == domain.RunStatusBlockedPost {
+		return domain.Run{}, errorsx.Wrap(
+			errorsx.CodePostScanBlocked,
+			"postflight scan did not produce an allowed result",
+			errorsx.ExitSecurityBlocked,
+			domain.ErrPostScanBlocked,
+		)
+	}
 	if run.Status != domain.RunStatusSucceeded && run.Status != domain.RunStatusFailed {
 		return domain.Run{}, errorsx.Wrap(errorsx.CodeValidation, "run status cannot be applied", errorsx.ExitUsage, domain.ErrValidation)
 	}
