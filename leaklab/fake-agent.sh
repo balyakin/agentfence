@@ -26,5 +26,5 @@ fi
 echo "agentfence fake change" > agentfence_fake_change.txt
 
 if [ "${AF_INJECT_SECRET:-}" = "1" ]; then
-  echo "sk-test-postflight-secret" > postflight_secret.txt
+  echo "AKIALALEMEL33243OLIA" > postflight_secret.txt
 fi
