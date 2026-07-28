@@ -61,16 +61,7 @@ func (r *ProcessRunner) Run(ctx context.Context, req ProcessRequest) (ProcessRes
 	go func() {
 		waitCh <- cmd.Wait()
 	}()
-	pgid, err := syscall.Getpgid(cmd.Process.Pid)
-	if err != nil {
-		_ = cmd.Process.Kill()
-		select {
-		case <-waitCh:
-			return ProcessResult{}, fmt.Errorf("get process group: %w", err)
-		case <-time.After(hardKillWait):
-			return ProcessResult{}, fmt.Errorf("get process group: %w; process did not stop", err)
-		}
-	}
+	pgid := cmd.Process.Pid
 
 	select {
 	case err := <-waitCh:

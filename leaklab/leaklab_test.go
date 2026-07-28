@@ -85,9 +85,7 @@ func createLeakLabRepo(t *testing.T) string {
 	}
 	git(t, repo, "add", "history.txt")
 	git(t, repo, "commit", "-m", "history secret")
-	if err := os.Remove(filepath.Join(repo, "history.txt")); err != nil {
-		t.Fatalf("remove history secret: %v", err)
-	}
+	git(t, repo, "rm", "history.txt")
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("leaklab fixture\n"), 0o600); err != nil {
 		t.Fatalf("write readme: %v", err)
 	}
