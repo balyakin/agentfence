@@ -32,6 +32,29 @@ func TestResolveLatestIgnoresActive(t *testing.T) {
 	}
 }
 
+func TestResolveLatestUsesChronologicalTimeAndIDTieBreaker(t *testing.T) {
+	t.Parallel()
+	store := openTestStore(t)
+	base := time.Date(2026, time.July, 28, 12, 0, 0, 0, time.UTC)
+	runs := []domain.Run{
+		testRun("a", domain.RunStatusSucceeded, base.Add(9*time.Nanosecond)),
+		testRun("b", domain.RunStatusSucceeded, base.Add(10*time.Nanosecond)),
+		testRun("c", domain.RunStatusSucceeded, base.Add(10*time.Nanosecond)),
+	}
+	for _, run := range runs {
+		if err := store.CreateRun(context.Background(), run); err != nil {
+			t.Fatalf("create %s: %v", run.ID, err)
+		}
+	}
+	latest, err := store.ResolveLatestRun(context.Background(), "/repo")
+	if err != nil {
+		t.Fatalf("latest: %v", err)
+	}
+	if latest.ID != "c" {
+		t.Fatalf("latest=%s", latest.ID)
+	}
+}
+
 func openTestStore(t *testing.T) *Store {
 	t.Helper()
 	store, err := Open(context.Background(), filepath.Join(t.TempDir(), "agentfence.db"), slog.New(slog.NewTextHandler(io.Discard, nil)), nil)

@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"crypto/subtle"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"time"
 
@@ -81,6 +83,23 @@ func (s *Server) recoverer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if recovered := recover(); recovered != nil {
+				if recovered == http.ErrAbortHandler {
+					panic(recovered)
+				}
+				message := fmt.Sprint(recovered)
+				stack := string(debug.Stack())
+				if s.redactor != nil {
+					message = s.redactor.RedactString(message)
+					stack = s.redactor.RedactString(stack)
+				}
+				if s.logger != nil {
+					s.logger.ErrorContext(
+						r.Context(),
+						"http handler panic",
+						slog.String("panic", message),
+						slog.String("stack", stack),
+					)
+				}
 				writeError(w, errorsx.Wrap(errorsx.CodeInternal, "internal error", errorsx.ExitInternal, nil))
 			}
 		}()
@@ -91,9 +110,22 @@ func (s *Server) recoverer(next http.Handler) http.Handler {
 func (s *Server) runRateLimit(next http.Handler) http.Handler {
 	limiter := rate.NewLimiter(rate.Every(time.Minute), 3)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && r.URL.Path == "/v1/runs" {
+		isWorkRequest := r.Method == http.MethodPost &&
+			(r.URL.Path == "/v1/runs" || r.URL.Path == "/v1/scan")
+		if isWorkRequest {
 			if !limiter.Allow() {
-				http.Error(w, "rate limited", http.StatusTooManyRequests)
+				writeError(w, errorsx.Wrap(errorsx.CodeBusy, "rate limited", errorsx.ExitInternal, nil))
+				return
+			}
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/scan" {
+			select {
+			case s.scanSlots <- struct{}{}:
+				defer func() {
+					<-s.scanSlots
+				}()
+			default:
+				writeError(w, errorsx.Wrap(errorsx.CodeBusy, "scan already in progress", errorsx.ExitInternal, nil))
 				return
 			}
 		}

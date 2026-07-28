@@ -1,6 +1,7 @@
 package execx
 
 import (
+	"bytes"
 	"math"
 	"regexp"
 	"strings"
@@ -75,6 +76,28 @@ func (r *Redactor) TailWindow() int {
 		}
 	}
 	return maxLen
+}
+
+func (r *Redactor) ProtectFlushBoundary(buffer []byte, boundary int) int {
+	r.mu.RLock()
+	secrets := append([]string{}, r.secrets...)
+	r.mu.RUnlock()
+	for _, secret := range secrets {
+		secretBytes := []byte(secret)
+		searchStart := 0
+		for searchStart < len(buffer) {
+			index := bytes.Index(buffer[searchStart:], secretBytes)
+			if index < 0 {
+				break
+			}
+			index += searchStart
+			if index < boundary && index+len(secretBytes) > boundary {
+				boundary = index
+			}
+			searchStart = index + 1
+		}
+	}
+	return boundary
 }
 
 func looksSensitive(candidate string) bool {

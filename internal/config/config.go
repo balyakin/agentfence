@@ -61,6 +61,7 @@ type AuthMount struct {
 	HostPath    string `yaml:"host_path" json:"host_path" validate:"required"`
 	SandboxPath string `yaml:"sandbox_path" json:"sandbox_path" validate:"required,startswith=/"`
 	Readonly    bool   `yaml:"readonly" json:"readonly"`
+	Writable    bool   `yaml:"writable" json:"writable"`
 }
 
 type AgentAdapterConfig struct {

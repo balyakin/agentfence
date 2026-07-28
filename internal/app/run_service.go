@@ -23,35 +23,48 @@ import (
 )
 
 type RunService struct {
-	store     ports.Store
-	git       ports.GitRunner
-	policy    ports.PolicyPlanner
-	workspace ports.WorkspaceManager
-	scanners  []ports.Scanner
-	sandbox   ports.Sandbox
-	agents    ports.AgentRegistry
-	locks     ports.LockManager
-	paths     state.Paths
-	redactor  *execx.Redactor
-	logger    *slog.Logger
-	clock     ports.Clock
+	store          ports.Store
+	git            ports.GitRunner
+	policy         ports.PolicyPlanner
+	workspace      ports.WorkspaceManager
+	scanners       []ports.Scanner
+	scannerFactory ScannerFactory
+	sandbox        ports.Sandbox
+	sandboxFactory SandboxFactory
+	agents         ports.AgentRegistry
+	locks          ports.LockManager
+	paths          state.Paths
+	redactor       *execx.Redactor
+	logger         *slog.Logger
+	clock          ports.Clock
 }
 
-const postRunGracePeriod = 30 * time.Second
+const (
+	postRunGracePeriod   = 30 * time.Second
+	persistenceTimeout   = 10 * time.Second
+	workspaceWatchPeriod = 50 * time.Millisecond
+	persistedTask        = "[redacted]"
+)
+
+type ScannerFactory func(config.ScanConfig) ([]ports.Scanner, error)
+
+type SandboxFactory func(config.SandboxConfig) (ports.Sandbox, error)
 
 type RunServiceDeps struct {
-	Store     ports.Store
-	Git       ports.GitRunner
-	Policy    ports.PolicyPlanner
-	Workspace ports.WorkspaceManager
-	Scanners  []ports.Scanner
-	Sandbox   ports.Sandbox
-	Agents    ports.AgentRegistry
-	Locks     ports.LockManager
-	Paths     state.Paths
-	Redactor  *execx.Redactor
-	Logger    *slog.Logger
-	Clock     ports.Clock
+	Store          ports.Store
+	Git            ports.GitRunner
+	Policy         ports.PolicyPlanner
+	Workspace      ports.WorkspaceManager
+	Scanners       []ports.Scanner
+	ScannerFactory ScannerFactory
+	Sandbox        ports.Sandbox
+	SandboxFactory SandboxFactory
+	Agents         ports.AgentRegistry
+	Locks          ports.LockManager
+	Paths          state.Paths
+	Redactor       *execx.Redactor
+	Logger         *slog.Logger
+	Clock          ports.Clock
 }
 
 type configurableAgentRegistry interface {
@@ -63,13 +76,17 @@ type runContextStore interface {
 }
 
 func NewRunService(deps RunServiceDeps) (*RunService, error) {
-	if deps.Store == nil || deps.Git == nil || deps.Policy == nil || deps.Workspace == nil || deps.Sandbox == nil ||
-		deps.Agents == nil || deps.Locks == nil || deps.Redactor == nil || deps.Logger == nil || deps.Clock == nil || len(deps.Scanners) == 0 {
+	scannersMissing := len(deps.Scanners) == 0 && deps.ScannerFactory == nil
+	sandboxMissing := deps.Sandbox == nil && deps.SandboxFactory == nil
+	if deps.Store == nil || deps.Git == nil || deps.Policy == nil || deps.Workspace == nil || sandboxMissing ||
+		deps.Agents == nil || deps.Locks == nil || deps.Redactor == nil || deps.Logger == nil || deps.Clock == nil ||
+		scannersMissing {
 		return nil, errorsx.Wrap(errorsx.CodeInternal, "run service dependency missing", errorsx.ExitInternal, nil)
 	}
 	return &RunService{
 		store: deps.Store, git: deps.Git, policy: deps.Policy, workspace: deps.Workspace,
-		scanners: deps.Scanners, sandbox: deps.Sandbox, agents: deps.Agents, locks: deps.Locks,
+		scanners: deps.Scanners, scannerFactory: deps.ScannerFactory,
+		sandbox: deps.Sandbox, sandboxFactory: deps.SandboxFactory, agents: deps.Agents, locks: deps.Locks,
 		paths: deps.Paths, redactor: deps.Redactor, logger: deps.Logger, clock: deps.Clock,
 	}, nil
 }
@@ -95,6 +112,17 @@ func (s *RunService) Run(ctx context.Context, req domain.RunRequest) (domain.Run
 		return domain.RunResult{}, err
 	}
 	applyRunOverrides(&cfg, req)
+	if err := config.Validate(cfg); err != nil {
+		return domain.RunResult{}, err
+	}
+	scanners, err := s.scannersForConfig(cfg.Scan)
+	if err != nil {
+		return domain.RunResult{}, err
+	}
+	sandboxAdapter, err := s.sandboxForConfig(cfg.Sandbox)
+	if err != nil {
+		return domain.RunResult{}, err
+	}
 	timeoutSeconds := req.TimeoutSeconds
 	if timeoutSeconds <= 0 {
 		timeoutSeconds = 3600
@@ -114,7 +142,7 @@ func (s *RunService) Run(ctx context.Context, req domain.RunRequest) (domain.Run
 			ID: runID, RepoPath: repoRoot, RepoHead: "", BaseRef: "",
 			RunDir: s.paths.RunDir(runID), ShadowPath: filepath.Join(s.paths.RunDir(runID), "shadow"),
 			MetadataPath: filepath.Join(s.paths.RunDir(runID), "shadow_metadata.json"), PatchPath: filepath.Join(s.paths.RunDir(runID), "changes.patch"),
-			AgentName: req.Agent, TaskRedacted: s.redactor.RedactString(req.Task), Status: domain.RunStatusCreated,
+			AgentName: req.Agent, TaskRedacted: persistedTask, Status: domain.RunStatusCreated,
 			PreScanStatus: "pending", PostScanStatus: "pending", NetworkMode: cfg.Sandbox.Network, IsolationLevel: "",
 			TimeoutSeconds: timeoutSeconds, CreatedAt: now, UpdatedAt: now,
 		}
@@ -138,10 +166,11 @@ func (s *RunService) Run(ctx context.Context, req domain.RunRequest) (domain.Run
 	terminal := false
 	defer func() {
 		if !terminal {
-			if err := s.store.SetRunFinished(context.WithoutCancel(ctx), domain.RunFinishResult{
-				RunID: runID, Status: domain.RunStatusFailed, ErrorCode: errorsx.CodeInternal, ErrorMessage: "run did not complete", FinishedAt: s.clock.Now(),
-			}); err != nil {
-				s.logger.ErrorContext(context.WithoutCancel(ctx), "finalize incomplete run failed", slog.String("run_id", runID), slog.Any("error", err))
+			status, code, message := terminalFailure(runCtx.Err())
+			finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), persistenceTimeout)
+			defer finishCancel()
+			if err := s.finish(finishCtx, runID, status, nil, "", code, message); err != nil {
+				s.logger.ErrorContext(finishCtx, "finalize incomplete run failed", slog.String("run_id", runID), slog.Any("error", err))
 			}
 		}
 	}()
@@ -161,10 +190,10 @@ func (s *RunService) Run(ctx context.Context, req domain.RunRequest) (domain.Run
 			return domain.RunResult{}, fmt.Errorf("check clean tree: %w", err)
 		}
 		if len(status) > 0 {
-			terminal = true
-			if finishErr := s.finish(runCtx, runID, domain.RunStatusFailed, nil, "", errorsx.CodeRepoDirty, "repository is dirty"); finishErr != nil {
+			if finishErr := s.finishDurably(ctx, runID, domain.RunStatusFailed, nil, "", errorsx.CodeRepoDirty, "repository is dirty"); finishErr != nil {
 				return domain.RunResult{}, finishErr
 			}
+			terminal = true
 			return domain.RunResult{}, errorsx.Wrap(errorsx.CodeRepoDirty, "repository is dirty", errorsx.ExitUsage, domain.ErrRepoDirty)
 		}
 	}
@@ -189,7 +218,7 @@ func (s *RunService) Run(ctx context.Context, req domain.RunRequest) (domain.Run
 	if err != nil {
 		return domain.RunResult{}, fmt.Errorf("build exposure plan: %w", err)
 	}
-	cfgJSON, err := json.Marshal(cfg)
+	cfgJSON, err := json.Marshal(safeConfigSnapshot(cfg))
 	if err != nil {
 		return domain.RunResult{}, fmt.Errorf("marshal config snapshot: %w", err)
 	}
@@ -210,7 +239,15 @@ func (s *RunService) Run(ctx context.Context, req domain.RunRequest) (domain.Run
 	if err := s.store.SetRunStatus(runCtx, runID, domain.RunStatusScanning); err != nil {
 		return domain.RunResult{}, err
 	}
-	preScan, err := s.scanPhase(runCtx, cfg, runID, domain.FindingPhasePreflight, workspaceResult.ShadowPath, runDir)
+	preScan, err := s.scanPhase(
+		runCtx,
+		cfg,
+		scanners,
+		runID,
+		domain.FindingPhasePreflight,
+		workspaceResult.ShadowPath,
+		runDir,
+	)
 	if err != nil {
 		return domain.RunResult{}, err
 	}
@@ -218,10 +255,10 @@ func (s *RunService) Run(ctx context.Context, req domain.RunRequest) (domain.Run
 		return domain.RunResult{}, err
 	}
 	if preScan.Blocked {
-		terminal = true
-		if err := s.finish(runCtx, runID, domain.RunStatusBlocked, nil, "", errorsx.CodeScanBlocked, "preflight scan blocked run"); err != nil {
+		if err := s.finishDurably(ctx, runID, domain.RunStatusBlocked, nil, "", errorsx.CodeScanBlocked, "preflight scan blocked run"); err != nil {
 			return domain.RunResult{}, err
 		}
+		terminal = true
 		return domain.RunResult{RunID: runID, Status: domain.RunStatusBlocked}, errorsx.Wrap(errorsx.CodeScanBlocked, "preflight scan blocked run", errorsx.ExitSecurityBlocked, domain.ErrScanBlocked)
 	}
 	registry := s.agents
@@ -243,18 +280,13 @@ func (s *RunService) Run(ctx context.Context, req domain.RunRequest) (domain.Run
 			return domain.RunResult{}, err
 		}
 	}
-	if cfg.Agent.Interactive {
-		if err := s.event(runCtx, runID, "warn", "interactive_tty_enabled", "interactive mode enabled", "{}"); err != nil {
-			return domain.RunResult{}, err
-		}
-	}
 	if err := s.store.SetRunStarted(runCtx, runID); err != nil {
 		return domain.RunResult{}, err
 	}
 	if err := s.store.SetRunStatus(runCtx, runID, domain.RunStatusRunning); err != nil {
 		return domain.RunResult{}, err
 	}
-	runResult, runErr := s.sandbox.Run(runCtx, domain.SandboxRunRequest{
+	runResult, runErr := s.runSandboxWithWorkspaceWatch(runCtx, sandboxAdapter, domain.SandboxRunRequest{
 		Invocation: invocation, ShadowPath: workspaceResult.ShadowPath, LogsDir: workspaceResult.LogsDir, NetworkMode: cfg.Sandbox.Network,
 		TimeoutSeconds: timeoutSeconds, WritablePaths: cfg.Sandbox.WritablePaths, AuthMounts: cfg.Agent.AuthMounts, EnvAllowlist: cfg.Agent.EnvAllowlist,
 		Stdout: stdout, Stderr: stderr, AllowSoftMode: cfg.Sandbox.AllowSoftMode || req.AllowSoftMode,
@@ -266,27 +298,41 @@ func (s *RunService) Run(ctx context.Context, req domain.RunRequest) (domain.Run
 		postCtx, postCancel = context.WithTimeout(context.WithoutCancel(ctx), postRunGracePeriod)
 		defer postCancel()
 	}
-	if err := s.workspace.ValidatePostRunWorkspace(postCtx, workspaceResult.ShadowPath); err != nil {
-		terminal = true
-		if finishErr := s.finish(postCtx, runID, domain.RunStatusBlockedPost, &runResult.ExitCode, runResult.IsolationLevel, errorsx.CodePostScanBlocked, "unsafe post-run workspace"); finishErr != nil {
+	workspaceViolation := errors.Is(runErr, domain.ErrPostScanBlocked)
+	validationErr := s.workspace.ValidatePostRunWorkspace(postCtx, workspaceResult.ShadowPath)
+	if validationErr != nil || workspaceViolation {
+		if validationErr == nil {
+			validationErr = runErr
+		}
+		if finishErr := s.finishDurably(ctx, runID, domain.RunStatusBlockedPost, &runResult.ExitCode, runResult.IsolationLevel, errorsx.CodePostScanBlocked, "unsafe post-run workspace"); finishErr != nil {
 			return domain.RunResult{}, finishErr
 		}
-		return domain.RunResult{RunID: runID, Status: domain.RunStatusBlockedPost, PatchPath: patchPath}, errorsx.Wrap(errorsx.CodePostScanBlocked, "unsafe post-run workspace", errorsx.ExitSecurityBlocked, err)
+		terminal = true
+		return domain.RunResult{RunID: runID, Status: domain.RunStatusBlockedPost, PatchPath: patchPath}, errorsx.Wrap(errorsx.CodePostScanBlocked, "unsafe post-run workspace", errorsx.ExitSecurityBlocked, validationErr)
 	}
 	if err := s.store.SetRunStatus(postCtx, runID, domain.RunStatusPostScan); err != nil {
 		return domain.RunResult{}, err
 	}
-	postScan, err := s.scanPhase(postCtx, cfg, runID, domain.FindingPhasePostflight, workspaceResult.ShadowPath, runDir)
+	postScan, err := s.scanPhase(
+		postCtx,
+		cfg,
+		scanners,
+		runID,
+		domain.FindingPhasePostflight,
+		workspaceResult.ShadowPath,
+		runDir,
+	)
 	if err != nil {
 		return domain.RunResult{}, err
 	}
 	if err := s.workspace.GeneratePatch(postCtx, domain.GeneratePatchRequest{
-		RunDir: runDir, ShadowPath: workspaceResult.ShadowPath, PatchPath: patchPath,
+		RunDir: runDir, ShadowPath: workspaceResult.ShadowPath, TrustedGitDir: workspaceResult.TrustedGitDir,
+		PatchPath:         patchPath,
 		IgnoredPatchPaths: workspaceResult.IgnoredPatchPaths,
 	}); err != nil {
 		return domain.RunResult{}, err
 	}
-	patchScan, err := s.scanPhase(postCtx, cfg, runID, domain.FindingPhasePatch, patchPath, runDir)
+	patchScan, err := s.scanPhase(postCtx, cfg, scanners, runID, domain.FindingPhasePatch, patchPath, runDir)
 	if err != nil {
 		return domain.RunResult{}, err
 	}
@@ -301,10 +347,10 @@ func (s *RunService) Run(ctx context.Context, req domain.RunRequest) (domain.Run
 		return domain.RunResult{}, err
 	}
 	if postScan.Blocked || patchScan.Blocked {
-		terminal = true
-		if err := s.finish(postCtx, runID, domain.RunStatusBlockedPost, &runResult.ExitCode, runResult.IsolationLevel, errorsx.CodePostScanBlocked, "postflight scan blocked apply"); err != nil {
+		if err := s.finishDurably(ctx, runID, domain.RunStatusBlockedPost, &runResult.ExitCode, runResult.IsolationLevel, errorsx.CodePostScanBlocked, "postflight scan blocked apply"); err != nil {
 			return domain.RunResult{}, err
 		}
+		terminal = true
 		return domain.RunResult{RunID: runID, Status: domain.RunStatusBlockedPost, PatchPath: patchPath}, errorsx.Wrap(errorsx.CodePostScanBlocked, "postflight scan blocked apply", errorsx.ExitSecurityBlocked, domain.ErrPostScanBlocked)
 	}
 	status := domain.RunStatusSucceeded
@@ -329,23 +375,74 @@ func (s *RunService) Run(ctx context.Context, req domain.RunRequest) (domain.Run
 		message = "agent failed"
 		resultErr = errorsx.Wrap(code, message, errorsx.ExitInternal, runErr)
 	}
-	terminal = true
-	if err := s.finish(postCtx, runID, status, &runResult.ExitCode, runResult.IsolationLevel, code, message); err != nil {
+	if err := s.finishDurably(ctx, runID, status, &runResult.ExitCode, runResult.IsolationLevel, code, message); err != nil {
 		return domain.RunResult{}, err
 	}
+	terminal = true
 	return domain.RunResult{RunID: runID, Status: status, PatchPath: patchPath}, resultErr
 }
 
-func (s *RunService) scanPhase(ctx context.Context, cfg config.Config, runID string, phase domain.FindingPhase, target string, runDir string) (domain.ScanResult, error) {
+func (s *RunService) runSandboxWithWorkspaceWatch(
+	ctx context.Context,
+	sandboxAdapter ports.Sandbox,
+	req domain.SandboxRunRequest,
+) (domain.SandboxRunResult, error) {
+	sandboxCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	watchResult := make(chan error, 1)
+	go func() {
+		err := s.watchWorkspace(sandboxCtx, req.ShadowPath)
+		if err != nil {
+			cancel()
+		}
+		watchResult <- err
+	}()
+	result, runErr := sandboxAdapter.Run(sandboxCtx, req)
+	cancel()
+	watchErr := <-watchResult
+	if watchErr != nil {
+		return result, watchErr
+	}
+	return result, runErr
+}
+
+func (s *RunService) watchWorkspace(ctx context.Context, shadowPath string) error {
+	ticker := time.NewTicker(workspaceWatchPeriod)
+	defer ticker.Stop()
+	for {
+		err := s.workspace.ValidatePostRunWorkspace(ctx, shadowPath)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+func (s *RunService) scanPhase(
+	ctx context.Context,
+	cfg config.Config,
+	scanners []ports.Scanner,
+	runID string,
+	phase domain.FindingPhase,
+	target string,
+	runDir string,
+) (domain.ScanResult, error) {
 	if !cfg.Scan.Enabled {
 		if err := s.event(ctx, runID, "warn", "scan_disabled", "scanner disabled", "{}"); err != nil {
 			return domain.ScanResult{}, err
 		}
 		return domain.ScanResult{Status: "clean"}, nil
 	}
-	result, err := scanner.ScanAll(ctx, s.scanners, domain.ScanRequest{
+	result, err := scanner.ScanAll(ctx, scanners, domain.ScanRequest{
 		RunID: runID, Phase: phase, TargetPath: target, RunDir: runDir, TimeoutSeconds: cfg.Scan.TimeoutSeconds,
-	}, cfg.Scan.SeverityBlocklist)
+	}, cfg.Scan.SeverityBlocklist, cfg.Scan.FailOnFindings)
 	if err != nil {
 		return domain.ScanResult{}, err
 	}
@@ -399,6 +496,20 @@ func (s *RunService) finish(ctx context.Context, runID string, status domain.Run
 	})
 }
 
+func (s *RunService) finishDurably(
+	ctx context.Context,
+	runID string,
+	status domain.RunStatus,
+	exitCode *int,
+	isolationLevel string,
+	code string,
+	message string,
+) error {
+	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), persistenceTimeout)
+	defer cancel()
+	return s.finish(finishCtx, runID, status, exitCode, isolationLevel, code, message)
+}
+
 func (s *RunService) event(ctx context.Context, runID string, level string, eventType string, message string, dataJSON string) error {
 	return s.store.InsertEvent(ctx, domain.RunEvent{RunID: runID, Ts: s.clock.Now(), Level: level, EventType: eventType, Message: message, DataJSON: dataJSON})
 }
@@ -412,10 +523,74 @@ func applyRunOverrides(cfg *config.Config, req domain.RunRequest) {
 	}
 	if req.IncludeDirty {
 		cfg.Workspace.IncludeDirty = true
+		cfg.Workspace.RequireCleanTree = false
 	}
 	if req.IncludeUntracked {
 		cfg.Workspace.IncludeUntracked = true
+		cfg.Workspace.RequireCleanTree = false
 	}
+}
+
+func (s *RunService) scannersForConfig(cfg config.ScanConfig) ([]ports.Scanner, error) {
+	if s.scannerFactory != nil {
+		return s.scannerFactory(cfg)
+	}
+	return s.scanners, nil
+}
+
+func (s *RunService) sandboxForConfig(cfg config.SandboxConfig) (ports.Sandbox, error) {
+	if s.sandboxFactory != nil {
+		return s.sandboxFactory(cfg)
+	}
+	return s.sandbox, nil
+}
+
+func safeConfigSnapshot(cfg config.Config) config.Config {
+	snapshot := cfg
+	snapshot.Workspace.Exclude = appendUniqueStrings(
+		snapshot.Workspace.Exclude,
+		config.MandatoryExcludes(),
+	)
+	snapshot.Workspace.StateDir = ""
+	snapshot.Workspace.CacheDir = ""
+	snapshot.Agent.AuthMounts = nil
+	snapshot.Daemon.SocketPath = ""
+	snapshot.Daemon.ListenAddress = ""
+	snapshot.Daemon.TokenFile = ""
+	snapshot.Agent.Adapters = make(map[string]config.AgentAdapterConfig, len(cfg.Agent.Adapters))
+	for name, adapter := range cfg.Agent.Adapters {
+		snapshot.Agent.Adapters[name] = config.AgentAdapterConfig{
+			Command:  filepath.Base(adapter.Command),
+			TaskMode: adapter.TaskMode,
+		}
+	}
+	return snapshot
+}
+
+func appendUniqueStrings(values []string, additions []string) []string {
+	result := append([]string{}, values...)
+	seen := make(map[string]struct{}, len(result)+len(additions))
+	for _, value := range result {
+		seen[value] = struct{}{}
+	}
+	for _, value := range additions {
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		result = append(result, value)
+		seen[value] = struct{}{}
+	}
+	return result
+}
+
+func terminalFailure(err error) (domain.RunStatus, string, string) {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return domain.RunStatusTimedOut, errorsx.CodeTimeout, "run timed out"
+	}
+	if errors.Is(err, context.Canceled) {
+		return domain.RunStatusCancelled, errorsx.CodeCancelled, "run cancelled"
+	}
+	return domain.RunStatusFailed, errorsx.CodeInternal, "run did not complete"
 }
 
 func mergeInvocationEnv(base []string, sanitized []string) []string {

@@ -6,12 +6,12 @@ func Presets() map[string]config.AgentAdapterConfig {
 	return map[string]config.AgentAdapterConfig{
 		"codex": {
 			Command:  "codex",
-			Args:     []string{"--no-interactive"},
+			Args:     []string{"exec"},
 			TaskMode: "stdin",
 		},
 		"claude": {
 			Command:  "claude",
-			Args:     []string{"--non-interactive"},
+			Args:     []string{"--print"},
 			TaskMode: "stdin",
 		},
 		"aider": {
@@ -21,7 +21,7 @@ func Presets() map[string]config.AgentAdapterConfig {
 		},
 		"opencode": {
 			Command:  "opencode",
-			Args:     []string{},
+			Args:     []string{"run"},
 			TaskMode: "stdin",
 		},
 	}

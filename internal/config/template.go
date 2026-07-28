@@ -23,8 +23,11 @@ workspace:
     - ".git"
     - ".git/**"
     - ".gitmodules"
+    - "**/.gitmodules"
     - ".env"
     - ".env.*"
+    - "**/.env"
+    - "**/.env.*"
     - "**/*.pem"
     - "**/*.key"
     - "**/*_rsa"
@@ -44,7 +47,9 @@ workspace:
     - "**/*.dump"
     - "**/*.sql"
     - "node_modules/**"
+    - "**/node_modules/**"
     - "vendor/**"
+    - "**/vendor/**"
 
 scan:
   enabled: true
@@ -92,11 +97,11 @@ agent:
   adapters:
     codex:
       command: codex
-      args: ["--no-interactive"]
+      args: ["exec"]
       task_mode: stdin
     claude:
       command: claude
-      args: ["--non-interactive"]
+      args: ["--print"]
       task_mode: stdin
     aider:
       command: aider
@@ -104,7 +109,7 @@ agent:
       task_mode: argv
     opencode:
       command: opencode
-      args: []
+      args: ["run"]
       task_mode: stdin
 
 apply:

@@ -113,55 +113,80 @@ func (g *Git) DirtyFiles(ctx context.Context, repoRoot string) ([]domain.Worktre
 	if err != nil {
 		return nil, err
 	}
+	var files []domain.WorktreeFile
 	var paths []byte
 	for _, entry := range entries {
-		if IsDirty(entry) {
-			paths = append(paths, []byte(entry.Path)...)
-			paths = append(paths, 0)
+		if !IsDirty(entry) {
+			continue
 		}
+		if entry.OrigPath != "" {
+			files = append(files, domain.WorktreeFile{RelativePath: normalizeRelative(entry.OrigPath), Deleted: true})
+		}
+		if entry.Index == 'D' || entry.Worktree == 'D' {
+			files = append(files, domain.WorktreeFile{RelativePath: normalizeRelative(entry.Path), Deleted: true})
+			continue
+		}
+		paths = append(paths, []byte(entry.Path)...)
+		paths = append(paths, 0)
 	}
-	return worktreeFilesFromZ(repoRoot, paths)
+	changed, err := worktreeFilesFromZ(repoRoot, paths)
+	if err != nil {
+		return nil, err
+	}
+	return append(files, changed...), nil
 }
 
-func (g *Git) ReadBlob(ctx context.Context, repoRoot string, relativePath string) ([]byte, os.FileMode, error) {
+func (g *Git) ReadBlob(ctx context.Context, repoRoot string, relativePath string) ([]byte, error) {
 	if _, err := safeRepoPath(repoRoot, relativePath); err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	output, err := g.run(ctx, repoRoot, "show", "HEAD:"+relativePath)
 	if err != nil {
-		return nil, 0, fmt.Errorf("git show blob: %w", err)
+		return nil, fmt.Errorf("git show blob: %w", err)
 	}
-	mode := os.FileMode(0o644)
-	files, err := g.TrackedFiles(ctx, repoRoot)
-	if err == nil {
-		for _, file := range files {
-			if file.RelativePath == normalizeRelative(relativePath) {
-				mode = file.Mode
-				break
-			}
-		}
-	}
-	return output, mode, nil
+	return output, nil
 }
 
 func (g *Git) ApplyPatch(ctx context.Context, req domain.ApplyPatchRequest) error {
+	if _, err := g.run(ctx, req.RepoPath, "apply", "--check", req.PatchPath); err != nil {
+		if _, reverseErr := g.run(ctx, req.RepoPath, "apply", "--reverse", "--check", req.PatchPath); reverseErr == nil {
+			return nil
+		}
+		return domain.ErrApplyConflict
+	}
 	if req.CreateBranch && req.BranchName != "" {
 		if _, err := g.run(ctx, req.RepoPath, "checkout", "-b", req.BranchName); err != nil {
 			return fmt.Errorf("create apply branch: %w", err)
 		}
 	}
-	args := []string{"apply", "--3way", req.PatchPath}
-	if _, err := g.run(ctx, req.RepoPath, args...); err != nil {
-		if req.Reject {
-			rejectArgs := []string{"apply", "--reject", req.PatchPath}
-			if _, rejectErr := g.run(ctx, req.RepoPath, rejectArgs...); rejectErr == nil {
-				return domain.ErrApplyConflict
-			}
-		}
-		if _, reverseErr := g.run(ctx, req.RepoPath, "apply", "--reverse", "--check", req.PatchPath); reverseErr == nil {
-			return nil
+	if _, err := g.run(ctx, req.RepoPath, "apply", req.PatchPath); err != nil {
+		if cleanupErr := g.cleanupApplyBranch(ctx, req); cleanupErr != nil {
+			return fmt.Errorf("apply patch: %w; cleanup branch: %v", domain.ErrApplyConflict, cleanupErr)
 		}
 		return domain.ErrApplyConflict
+	}
+	return nil
+}
+
+func (g *Git) RollbackPatch(ctx context.Context, req domain.ApplyPatchRequest) error {
+	if _, err := g.run(ctx, req.RepoPath, "apply", "--reverse", "--check", req.PatchPath); err != nil {
+		return fmt.Errorf("check apply rollback: %w", err)
+	}
+	if _, err := g.run(ctx, req.RepoPath, "apply", "--reverse", req.PatchPath); err != nil {
+		return fmt.Errorf("rollback applied patch: %w", err)
+	}
+	return g.cleanupApplyBranch(ctx, req)
+}
+
+func (g *Git) cleanupApplyBranch(ctx context.Context, req domain.ApplyPatchRequest) error {
+	if !req.CreateBranch || req.BranchName == "" || req.BaseRef == "" {
+		return nil
+	}
+	if _, err := g.run(ctx, req.RepoPath, "checkout", req.BaseRef); err != nil {
+		return fmt.Errorf("restore apply base branch: %w", err)
+	}
+	if _, err := g.run(ctx, req.RepoPath, "branch", "-D", req.BranchName); err != nil {
+		return fmt.Errorf("delete apply branch: %w", err)
 	}
 	return nil
 }

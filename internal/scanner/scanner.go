@@ -8,7 +8,13 @@ import (
 	"github.com/agentfence/agentfence/internal/ports"
 )
 
-func ScanAll(ctx context.Context, scanners []ports.Scanner, req domain.ScanRequest, blocklist []string) (domain.ScanResult, error) {
+func ScanAll(
+	ctx context.Context,
+	scanners []ports.Scanner,
+	req domain.ScanRequest,
+	blocklist []string,
+	failOnFindings bool,
+) (domain.ScanResult, error) {
 	var combined domain.ScanResult
 	combined.Status = "clean"
 	for _, engine := range scanners {
@@ -22,7 +28,7 @@ func ScanAll(ctx context.Context, scanners []ports.Scanner, req domain.ScanReque
 	if len(combined.Findings) > 0 {
 		combined.Status = "findings"
 	}
-	if domain.FindingsBlocked(combined.Findings, blocklist) {
+	if domain.FindingsBlocked(combined.Findings, blocklist) || failOnFindings && len(combined.Findings) > 0 {
 		combined.Status = "blocked"
 		combined.Blocked = true
 	}

@@ -59,7 +59,7 @@ func newRunCommand(opts *rootOptions) *cobra.Command {
 			})
 			if opts.json {
 				if err != nil {
-					return writePublicError(cmd.OutOrStdout(), err)
+					return writePublicErrorAndReturn(cmd.OutOrStdout(), err)
 				}
 				return writeOutput(cmd.OutOrStdout(), true, result)
 			}

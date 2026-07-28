@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
 
+	"github.com/agentfence/agentfence/internal/domain"
 	"github.com/agentfence/agentfence/internal/ports"
 	"github.com/gofrs/flock"
 )
@@ -26,25 +26,16 @@ func (m *FileLockManager) Acquire(ctx context.Context, repoPath string) (func(),
 		return nil, err
 	}
 	lock := flock.New(m.paths.LockPath(repoPath))
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		ok, err := lock.TryLockContext(ctx, 100*time.Millisecond)
-		if err != nil {
-			return nil, fmt.Errorf("acquire repo lock: %w", err)
-		}
-		if ok {
-			return func() {
-				if err := lock.Unlock(); err != nil && m.logger != nil {
-					m.logger.ErrorContext(ctx, "release repo lock failed", slog.Any("error", err))
-				}
-			}, nil
-		}
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			continue
-		}
+	ok, err := lock.TryLock()
+	if err != nil {
+		return nil, fmt.Errorf("acquire repo lock: %w", err)
 	}
+	if !ok {
+		return nil, domain.ErrActiveRunExists
+	}
+	return func() {
+		if err := lock.Unlock(); err != nil && m.logger != nil {
+			m.logger.ErrorContext(ctx, "release repo lock failed", slog.Any("error", err))
+		}
+	}, nil
 }

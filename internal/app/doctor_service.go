@@ -46,6 +46,8 @@ func (s *DoctorService) Check(ctx context.Context, cfg config.Config) DoctorResu
 	if cfg.Sandbox.Mode == "bubblewrap" && runtime.GOOS == "linux" {
 		result.add("bubblewrap", commandOK(ctx, "bwrap", "--version"), errorsx.CodeBwrapNotFound)
 		result.add("bubblewrap capability", commandOK(ctx, "bwrap", "--unshare-all", "--die-with-parent", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "true"), errorsx.CodeSandboxUnavailable)
+	} else if cfg.Sandbox.Mode == "bubblewrap" {
+		result.add("bubblewrap platform", false, errorsx.CodeSandboxUnavailable)
 	}
 	for _, dir := range []string{s.paths.StateDir, s.paths.CacheDir, s.paths.RunsDir, s.paths.LocksDir} {
 		ok := dirPermOK(dir)

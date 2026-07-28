@@ -24,7 +24,7 @@ func ParsePorcelainZ(data []byte) ([]domain.StatusEntry, error) {
 			Path:     string(record[3:]),
 		}
 		if entry.Index == 'R' || entry.Index == 'C' {
-			if i+1 >= len(records) {
+			if i+1 >= len(records) || len(records[i+1]) == 0 {
 				return nil, fmt.Errorf("missing rename source")
 			}
 			i++
@@ -36,7 +36,7 @@ func ParsePorcelainZ(data []byte) ([]domain.StatusEntry, error) {
 }
 
 func IsDirty(entry domain.StatusEntry) bool {
-	return (entry.Index != '?' || entry.Worktree != '?') && entry.Index != 'D' && entry.Worktree != 'D'
+	return entry.Index != '?' || entry.Worktree != '?'
 }
 
 func IsUntracked(entry domain.StatusEntry) bool {

@@ -1,0 +1,4 @@
+title = "AgentFence trusted Gitleaks rules"
+
+[extend]
+useDefault = true

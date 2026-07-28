@@ -28,6 +28,13 @@ func writePublicError(out io.Writer, err error) error {
 	return encoder.Encode(public)
 }
 
+func writePublicErrorAndReturn(out io.Writer, err error) error {
+	if writeErr := writePublicError(out, err); writeErr != nil {
+		return writeErr
+	}
+	return err
+}
+
 func runToMap(run domain.Run) map[string]any {
 	return map[string]any{
 		"id":               run.ID,

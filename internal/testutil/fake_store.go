@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"context"
+	"sort"
 	"sync"
 
 	"github.com/agentfence/agentfence/internal/domain"
@@ -55,7 +56,23 @@ func (s *FakeStore) ListRuns(ctx context.Context, filter domain.RunFilter) ([]do
 		if filter.RepoPath != "" && run.RepoPath != filter.RepoPath {
 			continue
 		}
+		if filter.Status != "" && run.Status != filter.Status {
+			continue
+		}
 		result = append(result, domain.RunSummary{ID: run.ID, RepoPath: run.RepoPath, AgentName: run.AgentName, Status: run.Status, TaskRedacted: run.TaskRedacted, CreatedAt: run.CreatedAt, FinishedAt: run.FinishedAt})
+	}
+	sort.Slice(result, func(first int, second int) bool {
+		if result[first].CreatedAt.Equal(result[second].CreatedAt) {
+			return result[first].ID > result[second].ID
+		}
+		return result[first].CreatedAt.After(result[second].CreatedAt)
+	})
+	if filter.Offset >= len(result) {
+		return nil, nil
+	}
+	result = result[filter.Offset:]
+	if filter.Limit > 0 && len(result) > filter.Limit {
+		result = result[:filter.Limit]
 	}
 	return result, nil
 }
@@ -70,6 +87,28 @@ func (s *FakeStore) SetRunStatus(ctx context.Context, runID string, status domai
 	run.Status = status
 	s.Runs[runID] = run
 	return nil
+}
+
+func (s *FakeStore) TransitionRunStatus(
+	ctx context.Context,
+	runID string,
+	from []domain.RunStatus,
+	to domain.RunStatus,
+) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run, ok := s.Runs[runID]
+	if !ok {
+		return false, domain.ErrRunNotFound
+	}
+	for _, status := range from {
+		if run.Status == status {
+			run.Status = to
+			s.Runs[runID] = run
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (s *FakeStore) SetRunStarted(ctx context.Context, runID string) error { return nil }

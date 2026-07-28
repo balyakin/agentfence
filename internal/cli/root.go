@@ -97,24 +97,36 @@ func bootstrap(ctx context.Context, opts *rootOptions, requireRepo bool) (*runti
 		return nil, err
 	}
 	runner := execx.NewProcessRunner(logger)
-	scannerAdapters := []ports.Scanner{scanner.NewGitleaks(runner, nil)}
-	for _, engine := range cfg.Scan.Engines {
-		if engine == "trufflehog" {
-			scannerAdapters = append(scannerAdapters, scanner.NewTruffleHog())
+	scannerFactory := func(scanConfig config.ScanConfig) ([]ports.Scanner, error) {
+		scannerAdapters := make([]ports.Scanner, 0, len(scanConfig.Engines))
+		for _, engine := range scanConfig.Engines {
+			switch engine {
+			case "gitleaks":
+				scannerAdapters = append(scannerAdapters, scanner.NewGitleaks(runner, nil))
+			case "trufflehog":
+				scannerAdapters = append(scannerAdapters, scanner.NewTruffleHog())
+			default:
+				return nil, errorsx.Wrap(
+					errorsx.CodeConfigInvalid,
+					"unsupported scanner engine",
+					errorsx.ExitUsage,
+					nil,
+				)
+			}
 		}
+		return scannerAdapters, nil
 	}
-	sandboxAdapter, err := sandbox.New(cfg.Sandbox, runner)
-	if err != nil {
-		return nil, err
+	sandboxFactory := func(sandboxConfig config.SandboxConfig) (ports.Sandbox, error) {
+		return sandbox.New(sandboxConfig, runner)
 	}
 	planner := policy.NewPlanner(git)
 	workspaceManager := workspace.NewManager(git)
 	registry := agent.NewRegistry(cfg.Agent)
 	locks := state.NewFileLockManager(paths, logger)
 	runService, err := app.NewRunService(app.RunServiceDeps{
-		Store: store, Git: git, Policy: planner, Workspace: workspaceManager, Scanners: scannerAdapters,
-		Sandbox: sandboxAdapter, Agents: registry, Locks: locks, Paths: paths, Redactor: redactor, Logger: logger,
-		Clock: ports.SystemClock{},
+		Store: store, Git: git, Policy: planner, Workspace: workspaceManager, ScannerFactory: scannerFactory,
+		SandboxFactory: sandboxFactory, Agents: registry, Locks: locks, Paths: paths, Redactor: redactor,
+		Logger: logger, Clock: ports.SystemClock{},
 	})
 	if err != nil {
 		return nil, err
@@ -123,7 +135,10 @@ func bootstrap(ctx context.Context, opts *rootOptions, requireRepo bool) (*runti
 	if err != nil {
 		return nil, err
 	}
-	scanService, err := app.NewScanService(app.ScanServiceDeps{Store: store, Git: git, Policy: planner, Workspace: workspaceManager, Scanners: scannerAdapters, Paths: paths, Clock: ports.SystemClock{}})
+	scanService, err := app.NewScanService(app.ScanServiceDeps{
+		Store: store, Git: git, Policy: planner, Workspace: workspaceManager, ScannerFactory: scannerFactory,
+		Paths: paths, Clock: ports.SystemClock{},
+	})
 	if err != nil {
 		return nil, err
 	}

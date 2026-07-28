@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/agentfence/agentfence/internal/config"
 	"github.com/agentfence/agentfence/internal/domain"
@@ -30,10 +30,16 @@ func NewApplyService(store ports.Store, git ports.GitRunner, clock ports.Clock, 
 }
 
 func (s *ApplyService) Apply(ctx context.Context, req domain.ApplyRunRequest, repoPath string, configPath string) (domain.Run, error) {
-	var run domain.Run
-	var err error
+	if req.Reject {
+		return domain.Run{}, errorsx.Wrap(
+			errorsx.CodeValidation,
+			"reject mode is unsupported because it can partially modify the checkout",
+			errorsx.ExitUsage,
+			domain.ErrValidation,
+		)
+	}
 	if req.RunID != "latest" {
-		run, err = s.store.GetRun(ctx, req.RunID)
+		run, err := s.store.GetRun(ctx, req.RunID)
 		if err != nil {
 			return domain.Run{}, mapRunLoadError(err)
 		}
@@ -45,29 +51,37 @@ func (s *ApplyService) Apply(ctx context.Context, req domain.ApplyRunRequest, re
 	if err != nil {
 		return domain.Run{}, errorsx.Wrap(errorsx.CodeNotGitRepo, "not a git repository", errorsx.ExitUsage, err)
 	}
-	cfg, err := config.LoadForRepo(ctx, repoRoot, configPath)
-	if err != nil {
-		return domain.Run{}, err
-	}
-	if req.RunID == "latest" {
-		run, err = s.store.ResolveLatestRun(ctx, repoRoot)
-		if err != nil {
-			return domain.Run{}, mapRunLoadError(err)
-		}
-	}
-	if run.RepoPath != repoRoot {
-		return domain.Run{}, errorsx.Wrap(errorsx.CodeValidation, "run belongs to another repository", errorsx.ExitUsage, nil)
-	}
 	release, err := s.locks.Acquire(ctx, repoRoot)
 	if err != nil {
 		return domain.Run{}, errorsx.Wrap(errorsx.CodeActiveRunExists, "active run exists for repository", errorsx.ExitUsage, err)
 	}
 	defer release()
+	var run domain.Run
+	if req.RunID == "latest" {
+		run, err = s.store.ResolveLatestRun(ctx, repoRoot)
+	} else {
+		run, err = s.store.GetRun(ctx, req.RunID)
+	}
+	if err != nil {
+		return domain.Run{}, mapRunLoadError(err)
+	}
+	if run.RepoPath != repoRoot {
+		return domain.Run{}, errorsx.Wrap(errorsx.CodeValidation, "run belongs to another repository", errorsx.ExitUsage, nil)
+	}
+	cfg, err := config.LoadForRepo(ctx, repoRoot, configPath)
+	if err != nil {
+		return domain.Run{}, err
+	}
 	if run.Status != domain.RunStatusSucceeded && run.Status != domain.RunStatusFailed {
 		return domain.Run{}, errorsx.Wrap(errorsx.CodeValidation, "run status cannot be applied", errorsx.ExitUsage, domain.ErrValidation)
 	}
-	if run.PostScanStatus != "clean" {
-		return domain.Run{}, errorsx.Wrap(errorsx.CodePostScanBlocked, "postflight scan is not clean", errorsx.ExitSecurityBlocked, domain.ErrPostScanBlocked)
+	if run.PostScanStatus != "clean" && run.PostScanStatus != "findings" {
+		return domain.Run{}, errorsx.Wrap(
+			errorsx.CodePostScanBlocked,
+			"postflight scan did not produce an allowed result",
+			errorsx.ExitSecurityBlocked,
+			domain.ErrPostScanBlocked,
+		)
 	}
 	patchInfo, err := os.Lstat(run.PatchPath)
 	if err != nil {
@@ -114,8 +128,22 @@ func (s *ApplyService) Apply(ctx context.Context, req domain.ApplyRunRequest, re
 		}
 		branchName = strings.TrimRight(cfg.Apply.BranchPrefix, "/") + "/" + short
 	}
-	if err := s.store.SetRunStatus(ctx, run.ID, domain.RunStatusApplying); err != nil {
+	transitioned, err := s.store.TransitionRunStatus(
+		ctx,
+		run.ID,
+		[]domain.RunStatus{domain.RunStatusSucceeded, domain.RunStatusFailed},
+		domain.RunStatusApplying,
+	)
+	if err != nil {
 		return domain.Run{}, err
+	}
+	if !transitioned {
+		return domain.Run{}, errorsx.Wrap(
+			errorsx.CodeValidation,
+			"run status changed before apply",
+			errorsx.ExitUsage,
+			domain.ErrValidation,
+		)
 	}
 	applyFinished := false
 	defer func() {
@@ -126,12 +154,16 @@ func (s *ApplyService) Apply(ctx context.Context, req domain.ApplyRunRequest, re
 		}
 	}()
 	attemptID, err := s.store.CreateApplyAttempt(ctx, domain.ApplyAttempt{
-		RunID: run.ID, RepoPath: repoRoot, PatchPath: run.PatchPath, Strategy: "git_apply_3way", BranchName: branchName, Status: "started", CreatedAt: s.clock.Now(),
+		RunID: run.ID, RepoPath: repoRoot, PatchPath: run.PatchPath, Strategy: "git_apply",
+		BranchName: branchName, Status: "started", CreatedAt: s.clock.Now(),
 	})
 	if err != nil {
 		return domain.Run{}, err
 	}
-	applyReq := domain.ApplyPatchRequest{RepoPath: repoRoot, PatchPath: run.PatchPath, CreateBranch: createBranch, BranchName: branchName, Reject: req.Reject, RejectDir: filepath.Join(run.RunDir, "rejects")}
+	applyReq := domain.ApplyPatchRequest{
+		RepoPath: repoRoot, PatchPath: run.PatchPath, CreateBranch: createBranch,
+		BranchName: branchName, BaseRef: currentBranch,
+	}
 	if err := s.git.ApplyPatch(ctx, applyReq); err != nil {
 		code := errorsx.CodeApplyConflict
 		if !errors.Is(err, domain.ErrApplyConflict) {
@@ -149,14 +181,41 @@ func (s *ApplyService) Apply(ctx context.Context, req domain.ApplyRunRequest, re
 		return domain.Run{}, errorsx.Wrap(code, "apply failed", errorsx.ExitApplyConflict, err)
 	}
 	if err := s.store.FinishApplyAttempt(ctx, attemptID, "succeeded", "", ""); err != nil {
-		return domain.Run{}, err
+		return domain.Run{}, s.rollbackAfterPersistenceFailure(ctx, run.ID, attemptID, applyReq, err)
 	}
 	if err := s.store.SetRunStatus(ctx, run.ID, domain.RunStatusApplied); err != nil {
-		return domain.Run{}, err
+		return domain.Run{}, s.rollbackAfterPersistenceFailure(ctx, run.ID, attemptID, applyReq, err)
 	}
 	applyFinished = true
 	run.Status = domain.RunStatusApplied
 	return run, nil
+}
+
+func (s *ApplyService) rollbackAfterPersistenceFailure(
+	ctx context.Context,
+	runID string,
+	attemptID int64,
+	req domain.ApplyPatchRequest,
+	persistenceErr error,
+) error {
+	rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	if err := s.git.RollbackPatch(rollbackCtx, req); err != nil {
+		return fmt.Errorf("persist apply result: %w; rollback checkout: %v", persistenceErr, err)
+	}
+	if err := s.store.FinishApplyAttempt(
+		rollbackCtx,
+		attemptID,
+		"rolled_back",
+		errorsx.CodeInternal,
+		"checkout rolled back after persistence failure",
+	); err != nil {
+		return fmt.Errorf("persist apply result: %w; persist rollback attempt: %v", persistenceErr, err)
+	}
+	if err := s.store.SetRunStatus(rollbackCtx, runID, domain.RunStatusApplyFailed); err != nil {
+		return fmt.Errorf("persist apply result: %w; persist rollback status: %v", persistenceErr, err)
+	}
+	return fmt.Errorf("persist apply result after checkout rollback: %w", persistenceErr)
 }
 
 func suppressBestEffortError(error) {}

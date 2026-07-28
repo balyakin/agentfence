@@ -14,6 +14,8 @@ func HTTPStatus(code string) int {
 		return http.StatusConflict
 	case CodeTimeout:
 		return http.StatusGatewayTimeout
+	case CodeBusy:
+		return http.StatusServiceUnavailable
 	default:
 		return http.StatusInternalServerError
 	}

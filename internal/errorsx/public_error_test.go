@@ -3,6 +3,8 @@ package errorsx
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -35,5 +37,49 @@ func TestRedactDetailsNestedValues(t *testing.T) {
 	}
 	if strings.Count(string(data), "[redacted]") != 5 {
 		t.Fatalf("expected nested redactions, got %s", data)
+	}
+}
+
+func TestPublicErrorHelpers(t *testing.T) {
+	t.Parallel()
+	cause := errors.New("cause")
+	public := WithDetails(
+		Wrap(CodeValidation, "invalid", ExitUsage, cause),
+		map[string]any{
+			"strings": []string{"short", strings.Repeat("x", 65)},
+			"values":  map[string]string{"token": strings.Repeat("y", 65)},
+			"number":  7,
+		},
+	)
+	if !errors.Is(public, cause) {
+		t.Fatal("public error did not unwrap its cause")
+	}
+	resolved, ok := IsPublic(fmt.Errorf("wrapped: %w", public))
+	if !ok || resolved != public {
+		t.Fatalf("public error was not resolved: %#v", resolved)
+	}
+	if value := WithDetails(nil, nil); value != nil {
+		t.Fatalf("nil public error became %#v", value)
+	}
+	if details := RedactDetails(nil); len(details) != 0 {
+		t.Fatalf("nil details became %#v", details)
+	}
+}
+
+func TestHTTPStatusMappings(t *testing.T) {
+	t.Parallel()
+	tests := map[string]int{
+		CodeUnauthorized:  http.StatusUnauthorized,
+		CodeValidation:    http.StatusBadRequest,
+		CodeRunNotFound:   http.StatusNotFound,
+		CodeApplyConflict: http.StatusConflict,
+		CodeTimeout:       http.StatusGatewayTimeout,
+		CodeBusy:          http.StatusServiceUnavailable,
+		CodeInternal:      http.StatusInternalServerError,
+	}
+	for code, expected := range tests {
+		if status := HTTPStatus(code); status != expected {
+			t.Fatalf("status for %s = %d, want %d", code, status, expected)
+		}
 	}
 }

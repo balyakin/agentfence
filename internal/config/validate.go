@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 
@@ -34,6 +35,40 @@ func Validate(cfg Config) error {
 	}
 	if err := validate.Struct(cfg); err != nil {
 		return errorsx.Wrap(errorsx.CodeConfigInvalid, "config invalid", errorsx.ExitUsage, err)
+	}
+	if cfg.Scan.Enabled && len(cfg.Scan.SeverityBlocklist) == 0 {
+		return errorsx.Wrap(
+			errorsx.CodeConfigInvalid,
+			"scan.severity_blocklist must not be empty when scanning is enabled",
+			errorsx.ExitUsage,
+			errors.New("empty severity blocklist"),
+		)
+	}
+	if cfg.Scan.ScanGitHistory {
+		return errorsx.Wrap(
+			errorsx.CodeConfigInvalid,
+			"scan.scan_git_history is unsupported because shadow workspaces contain no Git history",
+			errorsx.ExitUsage,
+			errors.New("unsupported scan_git_history"),
+		)
+	}
+	if cfg.Agent.Interactive {
+		return errorsx.Wrap(
+			errorsx.CodeConfigInvalid,
+			"agent.interactive is unsupported",
+			errorsx.ExitUsage,
+			errors.New("unsupported interactive mode"),
+		)
+	}
+	for _, mount := range cfg.Agent.AuthMounts {
+		if mount.Readonly && mount.Writable {
+			return errorsx.Wrap(
+				errorsx.CodeConfigInvalid,
+				"auth mount cannot be both readonly and writable",
+				errorsx.ExitUsage,
+				errors.New("conflicting auth mount mode"),
+			)
+		}
 	}
 	if _, ok := cfg.Agent.Adapters[cfg.Agent.Default]; !ok {
 		return errorsx.Wrap(errorsx.CodeConfigInvalid, fmt.Sprintf("agent.default %q has no adapter", cfg.Agent.Default), errorsx.ExitUsage, nil)

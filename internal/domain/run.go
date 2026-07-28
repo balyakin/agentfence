@@ -38,6 +38,7 @@ type RunFilter struct {
 	RepoPath string
 	Status   RunStatus
 	Limit    int
+	Offset   int
 }
 
 type RunSummary struct {
@@ -89,8 +90,7 @@ type ApplyPatchRequest struct {
 	PatchPath    string
 	CreateBranch bool
 	BranchName   string
-	Reject       bool
-	RejectDir    string
+	BaseRef      string
 }
 
 type ApplyRunRequest struct {
@@ -142,6 +142,7 @@ type CreateWorkspaceRequest struct {
 type WorkspaceResult struct {
 	RunDir              string
 	ShadowPath          string
+	TrustedGitDir       string
 	ScannerDir          string
 	LogsDir             string
 	MetadataPath        string
@@ -155,6 +156,7 @@ type WorkspaceResult struct {
 type GeneratePatchRequest struct {
 	RunDir            string
 	ShadowPath        string
+	TrustedGitDir     string
 	PatchPath         string
 	IgnoredPatchPaths []string
 }
@@ -208,6 +210,7 @@ type WorktreeFile struct {
 	RelativePath string
 	Mode         os.FileMode
 	Size         int64
+	Deleted      bool
 }
 
 type RunRequest struct {

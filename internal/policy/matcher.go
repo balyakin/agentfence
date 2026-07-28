@@ -3,6 +3,7 @@ package policy
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
 )
@@ -30,7 +31,7 @@ func NewMatcher(include []string, exclude []string) (*Matcher, error) {
 func (m *Matcher) Allowed(relativePath string) (bool, error) {
 	path := filepath.ToSlash(relativePath)
 	for _, pattern := range m.exclude {
-		matched, err := doublestar.Match(pattern, path)
+		matched, err := doublestar.Match(strings.ToLower(pattern), strings.ToLower(path))
 		if err != nil {
 			return false, fmt.Errorf("match exclude pattern: %w", err)
 		}

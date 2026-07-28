@@ -22,7 +22,9 @@ func NewPlanner(git ports.GitRunner) *Planner {
 }
 
 func (p *Planner) BuildExposurePlan(ctx context.Context, req domain.ExposurePlanRequest) (domain.ExposurePlan, error) {
-	matcher, err := NewMatcher(req.Config.Workspace.Include, req.Config.Workspace.Exclude)
+	excludes := append([]string{}, req.Config.Workspace.Exclude...)
+	excludes = append(excludes, MandatoryDenyPatterns()...)
+	matcher, err := NewMatcher(req.Config.Workspace.Include, excludes)
 	if err != nil {
 		return domain.ExposurePlan{}, err
 	}
@@ -77,6 +79,10 @@ func (p *Planner) BuildExposurePlan(ctx context.Context, req domain.ExposurePlan
 
 func (p *Planner) addWorktreeFiles(req domain.ExposurePlanRequest, matcher *Matcher, files map[string]domain.ExposureFile, skipped *[]domain.SkippedFile, worktree []domain.WorktreeFile, source string) {
 	for _, file := range worktree {
+		if file.Deleted {
+			delete(files, filepath.ToSlash(file.RelativePath))
+			continue
+		}
 		exposure, ok, reason, err := p.evaluate(req, matcher, file.RelativePath, source, file.Mode, file.Size, true)
 		if err != nil {
 			*skipped = append(*skipped, domain.SkippedFile{RelativePath: file.RelativePath, Reason: "unsafe_path", Size: file.Size})
@@ -96,6 +102,9 @@ func (p *Planner) evaluate(req domain.ExposurePlanRequest, matcher *Matcher, rel
 		return domain.ExposureFile{}, false, "unsafe_path", nil
 	}
 	if checkSymlink {
+		if mode&os.ModeSymlink != 0 {
+			return domain.ExposureFile{}, false, "unsafe_symlink_blocked", nil
+		}
 		if err := ValidateSymlinkInside(req.RepoPath, fullPath); err != nil {
 			return domain.ExposureFile{}, false, "unsafe_symlink_blocked", nil
 		}

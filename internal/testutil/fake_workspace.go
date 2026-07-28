@@ -12,6 +12,7 @@ type FakeWorkspace struct {
 	PatchBytes        []byte
 	SanitizedEnv      []string
 	IgnoredPatchPaths []string
+	ValidateFunc      func(context.Context, string) error
 }
 
 func (w *FakeWorkspace) Create(ctx context.Context, req domain.CreateWorkspaceRequest) (domain.WorkspaceResult, error) {
@@ -30,6 +31,7 @@ func (w *FakeWorkspace) Create(ctx context.Context, req domain.CreateWorkspaceRe
 	return domain.WorkspaceResult{
 		RunDir:            req.RunDir,
 		ShadowPath:        shadow,
+		TrustedGitDir:     filepath.Join(req.RunDir, "trusted.git"),
 		LogsDir:           logs,
 		ScannerDir:        scanner,
 		MetadataPath:      filepath.Join(req.RunDir, "shadow_metadata.json"),
@@ -44,5 +46,8 @@ func (w *FakeWorkspace) GeneratePatch(ctx context.Context, req domain.GeneratePa
 }
 
 func (w *FakeWorkspace) ValidatePostRunWorkspace(ctx context.Context, shadowPath string) error {
+	if w.ValidateFunc != nil {
+		return w.ValidateFunc(ctx, shadowPath)
+	}
 	return nil
 }

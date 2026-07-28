@@ -43,12 +43,12 @@ func DefaultConfig() Config {
 			Adapters: map[string]AgentAdapterConfig{
 				"codex": {
 					Command:  "codex",
-					Args:     []string{"--no-interactive"},
+					Args:     []string{"exec"},
 					TaskMode: "stdin",
 				},
 				"claude": {
 					Command:  "claude",
-					Args:     []string{"--non-interactive"},
+					Args:     []string{"--print"},
 					TaskMode: "stdin",
 				},
 				"aider": {
@@ -58,7 +58,7 @@ func DefaultConfig() Config {
 				},
 				"opencode": {
 					Command:  "opencode",
-					Args:     []string{},
+					Args:     []string{"run"},
 					TaskMode: "stdin",
 				},
 			},
@@ -89,8 +89,11 @@ func MandatoryExcludes() []string {
 		".git",
 		".git/**",
 		".gitmodules",
+		"**/.gitmodules",
 		".env",
 		".env.*",
+		"**/.env",
+		"**/.env.*",
 		"**/*.pem",
 		"**/*.key",
 		"**/*_rsa",
@@ -110,6 +113,8 @@ func MandatoryExcludes() []string {
 		"**/*.dump",
 		"**/*.sql",
 		"node_modules/**",
+		"**/node_modules/**",
 		"vendor/**",
+		"**/vendor/**",
 	}
 }

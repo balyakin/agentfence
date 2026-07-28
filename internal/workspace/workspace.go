@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -21,6 +22,11 @@ type Manager struct {
 	blobReader ports.GitRunner
 }
 
+const (
+	maxPostRunFiles = 100000
+	maxPostRunBytes = 1 << 30
+)
+
 var _ ports.WorkspaceManager = (*Manager)(nil)
 
 func NewManager(blobReader ports.GitRunner) *Manager {
@@ -29,12 +35,13 @@ func NewManager(blobReader ports.GitRunner) *Manager {
 
 func (m *Manager) Create(ctx context.Context, req domain.CreateWorkspaceRequest) (domain.WorkspaceResult, error) {
 	result := domain.WorkspaceResult{
-		RunDir:       req.RunDir,
-		ShadowPath:   filepath.Join(req.RunDir, "shadow"),
-		ScannerDir:   filepath.Join(req.RunDir, "scanner"),
-		LogsDir:      filepath.Join(req.RunDir, "logs"),
-		MetadataPath: filepath.Join(req.RunDir, "shadow_metadata.json"),
-		PatchPath:    filepath.Join(req.RunDir, "changes.patch"),
+		RunDir:        req.RunDir,
+		ShadowPath:    filepath.Join(req.RunDir, "shadow"),
+		TrustedGitDir: filepath.Join(req.RunDir, "trusted.git"),
+		ScannerDir:    filepath.Join(req.RunDir, "scanner"),
+		LogsDir:       filepath.Join(req.RunDir, "logs"),
+		MetadataPath:  filepath.Join(req.RunDir, "shadow_metadata.json"),
+		PatchPath:     filepath.Join(req.RunDir, "changes.patch"),
 	}
 	for _, dir := range []string{result.RunDir, result.ShadowPath, result.ScannerDir, result.LogsDir} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -49,7 +56,7 @@ func (m *Manager) Create(ctx context.Context, req domain.CreateWorkspaceRequest)
 			return domain.WorkspaceResult{}, err
 		}
 	}
-	if err := initBaseline(ctx, result.ShadowPath); err != nil {
+	if err := initBaseline(ctx, result.ShadowPath, result.TrustedGitDir); err != nil {
 		return domain.WorkspaceResult{}, err
 	}
 	envResult, err := buildSanitizedEnv(req.RepoRoot, result.ShadowPath, req.SanitizedEnv)
@@ -69,7 +76,7 @@ func (m *Manager) Create(ctx context.Context, req domain.CreateWorkspaceRequest)
 }
 
 func (m *Manager) copyFile(ctx context.Context, repoRoot string, shadowRoot string, file domain.ExposureFile) error {
-	if strings.EqualFold(file.RelativePath, ".gitmodules") {
+	if strings.EqualFold(filepath.Base(file.RelativePath), ".gitmodules") {
 		return domain.ErrUnsafePath
 	}
 	target, err := policy.SafeJoin(shadowRoot, file.RelativePath)
@@ -84,12 +91,9 @@ func (m *Manager) copyFile(ctx context.Context, repoRoot string, shadowRoot stri
 		mode = 0o644
 	}
 	if file.Source == "head" {
-		data, blobMode, err := m.blobReader.ReadBlob(ctx, repoRoot, file.RelativePath)
+		data, err := m.blobReader.ReadBlob(ctx, repoRoot, file.RelativePath)
 		if err != nil {
 			return fmt.Errorf("read tracked blob: %w", err)
-		}
-		if blobMode.Perm()&0o111 != 0 {
-			mode = blobMode.Perm() & 0o755
 		}
 		if err := os.WriteFile(target, data, mode); err != nil {
 			return fmt.Errorf("write shadow blob: %w", err)
@@ -99,18 +103,11 @@ func (m *Manager) copyFile(ctx context.Context, repoRoot string, shadowRoot stri
 		}
 		return nil
 	}
-	source, err := policy.SafeJoin(repoRoot, file.RelativePath)
-	if err != nil {
-		return err
-	}
-	if err := policy.ValidateSymlinkInside(repoRoot, source); err != nil {
-		return err
-	}
 	mode = mode & 0o755
 	if mode == 0 {
 		mode = 0o644
 	}
-	in, err := os.Open(source)
+	in, err := policy.OpenRegularNoSymlinks(repoRoot, file.RelativePath)
 	if err != nil {
 		return fmt.Errorf("open worktree file: %w", err)
 	}
@@ -130,8 +127,15 @@ func (m *Manager) copyFile(ctx context.Context, repoRoot string, shadowRoot stri
 			_ = out.Close()
 		}
 	}()
-	if _, err := io.Copy(out, in); err != nil {
+	copied, err := io.Copy(out, io.LimitReader(in, file.Size+1))
+	if err != nil {
 		return fmt.Errorf("copy shadow file: %w", err)
+	}
+	if copied > file.Size {
+		_ = out.Close()
+		outClosed = true
+		_ = os.Remove(target)
+		return domain.ErrUnsafePath
 	}
 	if err := in.Close(); err != nil {
 		return fmt.Errorf("close worktree file: %w", err)
@@ -149,6 +153,8 @@ func (m *Manager) ValidatePostRunWorkspace(ctx context.Context, shadowPath strin
 		return err
 	}
 	root := filepath.Clean(shadowPath)
+	fileCount := 0
+	totalBytes := int64(0)
 	return filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -161,9 +167,7 @@ func (m *Manager) ValidatePostRunWorkspace(ctx context.Context, shadowPath strin
 		}
 		name := entry.Name()
 		if strings.EqualFold(name, ".git") {
-			if filepath.Dir(path) != root || !entry.IsDir() {
-				return domain.ErrPostScanBlocked
-			}
+			return domain.ErrPostScanBlocked
 		}
 		info, err := entry.Info()
 		if err != nil {
@@ -171,12 +175,17 @@ func (m *Manager) ValidatePostRunWorkspace(ctx context.Context, shadowPath strin
 		}
 		mode := info.Mode()
 		if mode&os.ModeSymlink != 0 {
-			if err := policy.ValidateSymlinkInside(root, path); err != nil {
-				return domain.ErrPostScanBlocked
-			}
+			return domain.ErrPostScanBlocked
 		}
 		if mode&(os.ModeSocket|os.ModeDevice|os.ModeNamedPipe) != 0 {
 			return domain.ErrPostScanBlocked
+		}
+		if mode.IsRegular() {
+			fileCount++
+			totalBytes += info.Size()
+			if fileCount > maxPostRunFiles || totalBytes > maxPostRunBytes {
+				return domain.ErrPostScanBlocked
+			}
 		}
 		return nil
 	})
@@ -233,6 +242,7 @@ func writeMetadata(path string, req domain.CreateWorkspaceRequest, envResult san
 func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
+	cmd.Env = trustedGitEnv()
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	output, err := cmd.Output()
@@ -244,4 +254,83 @@ func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
 		return nil, fmt.Errorf("git %s failed: %w", args[0], err)
 	}
 	return output, nil
+}
+
+func runTrustedGit(
+	ctx context.Context,
+	gitDir string,
+	worktree string,
+	stdout io.Writer,
+	args ...string,
+) error {
+	gitArgs := []string{
+		"--git-dir=" + gitDir,
+		"--work-tree=" + worktree,
+		"-c",
+		"core.hooksPath=/dev/null",
+		"-c",
+		"core.fsmonitor=",
+		"-c",
+		"core.attributesfile=/dev/null",
+		"-c",
+		"diff.external=",
+	}
+	gitArgs = append(gitArgs, args...)
+	cmd := exec.CommandContext(ctx, "git", gitArgs...)
+	cmd.Dir = worktree
+	cmd.Env = trustedGitEnv()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	cmd.Stdout = stdout
+	if err := cmd.Run(); err != nil {
+		detail := strings.TrimSpace(stderr.String())
+		if detail != "" {
+			return fmt.Errorf("git %s failed: %w: %s", args[0], err, detail)
+		}
+		return fmt.Errorf("git %s failed: %w", args[0], err)
+	}
+	return nil
+}
+
+func trustedGitEnv() []string {
+	return []string{
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_SYSTEM=/dev/null",
+		"GIT_TERMINAL_PROMPT=0",
+		"HOME=",
+		"LC_ALL=C",
+		"PATH=" + os.Getenv("PATH"),
+	}
+}
+
+type limitedWriter struct {
+	dst       io.Writer
+	remaining int64
+	err       error
+}
+
+func (w *limitedWriter) Write(data []byte) (int, error) {
+	if int64(len(data)) > w.remaining {
+		w.err = domain.ErrPostScanBlocked
+		return 0, w.err
+	}
+	written, err := w.dst.Write(data)
+	w.remaining -= int64(written)
+	if err != nil {
+		w.err = err
+	}
+	return written, err
+}
+
+func (w *limitedWriter) Error() error {
+	return w.err
+}
+
+func removeFileOnError(path string, err error) error {
+	removeErr := os.Remove(path)
+	if removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+		return fmt.Errorf("%w; remove partial file: %v", err, removeErr)
+	}
+	return err
 }

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -22,12 +23,15 @@ type Store struct {
 var _ ports.Store = (*Store)(nil)
 
 func sqliteDSN(path string) string {
-	return "file:" + path +
-		"?_pragma=foreign_keys(1)" +
-		"&_pragma=busy_timeout(5000)" +
-		"&_pragma=journal_mode(WAL)" +
-		"&_pragma=synchronous(NORMAL)" +
-		"&_txlock=immediate"
+	dsn := &url.URL{Scheme: "file", Path: filepath.ToSlash(path)}
+	query := url.Values{}
+	query.Add("_pragma", "foreign_keys(1)")
+	query.Add("_pragma", "busy_timeout(5000)")
+	query.Add("_pragma", "journal_mode(WAL)")
+	query.Add("_pragma", "synchronous(NORMAL)")
+	query.Set("_txlock", "immediate")
+	dsn.RawQuery = query.Encode()
+	return dsn.String()
 }
 
 func Open(ctx context.Context, path string, logger *slog.Logger, clock ports.Clock) (*Store, error) {
@@ -83,11 +87,13 @@ func (s *Store) withTx(ctx context.Context, fn func(context.Context, *sql.Tx) er
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	if err := fn(ctx, tx); err != nil {
+	defer func() {
 		rollbackErr := tx.Rollback()
-		if rollbackErr != nil && s.logger != nil {
-			s.logger.ErrorContext(ctx, "rollback failed", slog.Any("error", rollbackErr))
+		if rollbackErr != nil && rollbackErr != sql.ErrTxDone && s.logger != nil {
+			s.logger.ErrorContext(context.WithoutCancel(ctx), "rollback failed", slog.Any("error", rollbackErr))
 		}
+	}()
+	if err := fn(ctx, tx); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -97,7 +103,7 @@ func (s *Store) withTx(ctx context.Context, fn func(context.Context, *sql.Tx) er
 }
 
 func formatTime(ts time.Time) string {
-	return ts.UTC().Format(time.RFC3339Nano)
+	return ts.UTC().Format("2006-01-02T15:04:05.000000000Z")
 }
 
 func parseTime(value string) (time.Time, error) {

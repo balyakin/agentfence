@@ -56,6 +56,7 @@ func (s *Store) ResolveLatestRun(ctx context.Context, repoPath string) (domain.R
 		string(domain.RunStatusRunning),
 		string(domain.RunStatusPostScan),
 		string(domain.RunStatusApplying),
+		string(domain.RunStatusCleaned),
 	}
 	placeholders := strings.TrimRight(strings.Repeat("?,", len(active)), ",")
 	args := []any{repoPath}
@@ -68,7 +69,7 @@ SELECT id, repo_path, repo_head, base_ref, run_dir, shadow_path, metadata_path, 
 	isolation_level, timeout_seconds, exit_code, error_code, error_message, created_at,
 	started_at, finished_at, updated_at
 FROM runs WHERE repo_path = ? AND status NOT IN (` + placeholders + `)
-ORDER BY created_at DESC LIMIT 1`
+ORDER BY created_at DESC, id DESC LIMIT 1`
 	run, err := scanRun(s.db.QueryRowContext(ctx, query, args...))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -98,8 +99,9 @@ func (s *Store) ListRuns(ctx context.Context, filter domain.RunFilter) ([]domain
 	if len(where) > 0 {
 		query += " WHERE " + strings.Join(where, " AND ")
 	}
-	query += " ORDER BY created_at DESC LIMIT ?"
+	query += " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?"
 	args = append(args, limit)
+	args = append(args, filter.Offset)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list runs: %w", err)
@@ -143,6 +145,32 @@ func (s *Store) SetRunStatus(ctx context.Context, runID string, status domain.Ru
 		return fmt.Errorf("set run status: %w", err)
 	}
 	return checkRowsAffected(result, domain.ErrRunNotFound)
+}
+
+func (s *Store) TransitionRunStatus(
+	ctx context.Context,
+	runID string,
+	from []domain.RunStatus,
+	to domain.RunStatus,
+) (bool, error) {
+	if len(from) == 0 {
+		return false, fmt.Errorf("transition run status requires source statuses")
+	}
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(from)), ",")
+	args := []any{string(to), formatTime(s.clock.Now()), runID}
+	for _, status := range from {
+		args = append(args, string(status))
+	}
+	query := `UPDATE runs SET status = ?, updated_at = ? WHERE id = ? AND status IN (` + placeholders + `)`
+	result, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return false, fmt.Errorf("transition run status: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("check transition rows: %w", err)
+	}
+	return rows == 1, nil
 }
 
 func (s *Store) SetRunStarted(ctx context.Context, runID string) error {

@@ -2,6 +2,8 @@ package cli
 
 import (
 	"github.com/agentfence/agentfence/internal/app"
+	"github.com/agentfence/agentfence/internal/domain"
+	"github.com/agentfence/agentfence/internal/errorsx"
 	"github.com/spf13/cobra"
 )
 
@@ -21,7 +23,18 @@ func newScanCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeOutput(cmd.OutOrStdout(), true, result)
+			if err := writeOutput(cmd.OutOrStdout(), true, result); err != nil {
+				return err
+			}
+			if result.Blocked {
+				return errorsx.Wrap(
+					errorsx.CodeScanBlocked,
+					"scan findings blocked the repository",
+					errorsx.ExitSecurityBlocked,
+					domain.ErrScanBlocked,
+				)
+			}
+			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&includeUntracked, "include-untracked", false, "include untracked files")

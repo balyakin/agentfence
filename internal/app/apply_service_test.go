@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -66,6 +67,51 @@ func TestApplyServiceRejectsEmptyPatch(t *testing.T) {
 	if git.Applied {
 		t.Fatalf("git apply should not be called")
 	}
+}
+
+func TestApplyServiceRollsBackWhenAppliedStatusCannotPersist(t *testing.T) {
+	t.Parallel()
+	baseStore := testutil.NewFakeStore()
+	store := &failingAppliedStore{FakeStore: baseStore}
+	git := &testutil.FakeGit{RepoRoot: "/repo"}
+	patch := filepath.Join(t.TempDir(), "changes.patch")
+	if err := os.WriteFile(patch, []byte("diff"), 0o600); err != nil {
+		t.Fatalf("write patch: %v", err)
+	}
+	now := time.Now().UTC()
+	run := domain.Run{
+		ID: "01ARZ3NDEKTSV4RRFFQ69G5FAY", RepoPath: "/repo", PatchPath: patch,
+		Status: domain.RunStatusSucceeded, PostScanStatus: "clean", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := store.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	service, err := NewApplyService(store, git, ports.SystemClock{}, &applyLockManager{})
+	if err != nil {
+		t.Fatalf("service: %v", err)
+	}
+	_, err = service.Apply(context.Background(), domain.ApplyRunRequest{RunID: run.ID}, "/repo", "")
+	if err == nil {
+		t.Fatalf("expected persistence failure")
+	}
+	if !git.RolledBack {
+		t.Fatalf("checkout was not rolled back")
+	}
+}
+
+type failingAppliedStore struct {
+	*testutil.FakeStore
+}
+
+func (s *failingAppliedStore) SetRunStatus(
+	ctx context.Context,
+	runID string,
+	status domain.RunStatus,
+) error {
+	if status == domain.RunStatusApplied {
+		return errors.New("persist applied failed")
+	}
+	return s.FakeStore.SetRunStatus(ctx, runID, status)
 }
 
 type applyLockManager struct {

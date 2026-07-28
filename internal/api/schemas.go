@@ -35,6 +35,16 @@ type RunResponse struct {
 	FinishedAt     *time.Time       `json:"finished_at,omitempty"`
 }
 
+type RunSummaryResponse struct {
+	ID           string           `json:"id"`
+	RepoPath     string           `json:"repo_path"`
+	AgentName    string           `json:"agent_name"`
+	Status       domain.RunStatus `json:"status"`
+	TaskRedacted string           `json:"task_redacted"`
+	CreatedAt    time.Time        `json:"created_at"`
+	FinishedAt   *time.Time       `json:"finished_at,omitempty"`
+}
+
 type CreateRunResponse struct {
 	RunID  string           `json:"run_id"`
 	Status domain.RunStatus `json:"status"`
@@ -63,5 +73,12 @@ func runToResponse(run domain.Run) RunResponse {
 	return RunResponse{
 		ID: run.ID, RepoPath: run.RepoPath, AgentName: run.AgentName, Status: run.Status, TaskRedacted: run.TaskRedacted,
 		PreScanStatus: run.PreScanStatus, PostScanStatus: run.PostScanStatus, CreatedAt: run.CreatedAt, FinishedAt: run.FinishedAt,
+	}
+}
+
+func runSummaryToResponse(run domain.RunSummary) RunSummaryResponse {
+	return RunSummaryResponse{
+		ID: run.ID, RepoPath: run.RepoPath, AgentName: run.AgentName, Status: run.Status,
+		TaskRedacted: run.TaskRedacted, CreatedAt: run.CreatedAt, FinishedAt: run.FinishedAt,
 	}
 }

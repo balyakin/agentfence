@@ -25,6 +25,9 @@ func newDaemonCommand(opts *rootOptions) *cobra.Command {
 			var address string
 			tcpMode := false
 			token := ""
+			if listen == "" {
+				listen = deps.cfg.Daemon.ListenAddress
+			}
 			if listen == "" || listen == "unix" {
 				network = "unix"
 				address = deps.cfg.Daemon.SocketPath
@@ -52,7 +55,10 @@ func newDaemonCommand(opts *rootOptions) *cobra.Command {
 			if maxWorkers <= 0 {
 				maxWorkers = deps.cfg.Daemon.MaxWorkers
 			}
-			queue := api.NewRunQueue(cmd.Context(), maxWorkers, deps.runService, deps.store, deps.logger)
+			queue, err := api.NewRunQueue(cmd.Context(), maxWorkers, deps.runService, deps.store, deps.logger)
+			if err != nil {
+				return err
+			}
 			defer func() {
 				if err := queue.Stop(); err != nil && deps.logger != nil {
 					deps.logger.Debug("stop run queue failed", "error", err)
@@ -68,7 +74,7 @@ func newDaemonCommand(opts *rootOptions) *cobra.Command {
 			return server.Serve(cmd.Context(), network, address)
 		},
 	}
-	cmd.Flags().StringVar(&listen, "listen", "unix", "unix or 127.0.0.1:17390")
+	cmd.Flags().StringVar(&listen, "listen", "", "unix or 127.0.0.1:17390")
 	cmd.Flags().StringVar(&tokenPath, "token-file", "", "daemon token file")
 	cmd.Flags().IntVar(&maxWorkers, "max-workers", 0, "max workers")
 	return cmd

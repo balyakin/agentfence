@@ -18,8 +18,7 @@ import (
 )
 
 const (
-	truffleHogExitClean    = 0
-	truffleHogExitFindings = 1
+	truffleHogExitClean = 0
 )
 
 type TruffleHog struct {
@@ -63,13 +62,22 @@ func (t *TruffleHog) Scan(ctx context.Context, req domain.ScanRequest) (domain.S
 		scanCtx, cancel = context.WithTimeout(ctx, time.Duration(req.TimeoutSeconds)*time.Second)
 	}
 	defer cancel()
-	result, runErr := t.runner.Run(scanCtx, execx.ProcessRequest{Executable: "trufflehog", Args: args, Stdout: report})
+	writer := &scannerReportWriter{dst: report, remaining: maxScannerReportSize}
+	result, runErr := t.runner.Run(scanCtx, execx.ProcessRequest{
+		Executable: "trufflehog",
+		Args:       args,
+		Env:        trustedScannerEnv(),
+		Stdout:     writer,
+	})
 	closeErr := report.Close()
 	if runErr != nil {
 		return domain.ScanResult{}, fmt.Errorf("run trufflehog: %w", runErr)
 	}
-	if result.ExitCode != truffleHogExitClean && result.ExitCode != truffleHogExitFindings {
+	if result.ExitCode != truffleHogExitClean {
 		return domain.ScanResult{}, fmt.Errorf("trufflehog exited with code %d", result.ExitCode)
+	}
+	if writer.err != nil {
+		return domain.ScanResult{}, fmt.Errorf("write trufflehog report: %w", writer.err)
 	}
 	if closeErr != nil {
 		return domain.ScanResult{}, fmt.Errorf("close trufflehog report: %w", closeErr)
@@ -91,6 +99,25 @@ func (t *TruffleHog) Scan(ctx context.Context, req domain.ScanRequest) (domain.S
 		status = "findings"
 	}
 	return domain.ScanResult{Findings: findings, RawSecrets: rawSecrets, Status: status}, nil
+}
+
+type scannerReportWriter struct {
+	dst       *os.File
+	remaining int64
+	err       error
+}
+
+func (w *scannerReportWriter) Write(data []byte) (int, error) {
+	if int64(len(data)) > w.remaining {
+		w.err = fmt.Errorf("scanner report exceeds %d bytes", maxScannerReportSize)
+		return 0, w.err
+	}
+	written, err := w.dst.Write(data)
+	w.remaining -= int64(written)
+	if err != nil {
+		w.err = err
+	}
+	return written, err
 }
 
 type truffleHogFinding struct {

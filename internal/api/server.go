@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/agentfence/agentfence/internal/app"
@@ -40,6 +42,7 @@ type Server struct {
 	logger       *slog.Logger
 	token        string
 	tcpMode      bool
+	scanSlots    chan struct{}
 }
 
 type ServerDeps struct {
@@ -63,7 +66,8 @@ func NewServer(deps ServerDeps) (*Server, error) {
 	}
 	server := &Server{
 		store: deps.Store, git: deps.Git, runService: deps.RunService, applyService: deps.ApplyService, scanService: deps.ScanService,
-		queue: deps.Queue, validator: validate, redactor: deps.Redactor, paths: deps.Paths, logger: deps.Logger, token: deps.Token, tcpMode: deps.TCPMode,
+		queue: deps.Queue, validator: validate, redactor: deps.Redactor, paths: deps.Paths, logger: deps.Logger,
+		token: deps.Token, tcpMode: deps.TCPMode, scanSlots: make(chan struct{}, 1),
 	}
 	server.router = server.routes()
 	server.httpServer = &http.Server{
@@ -145,8 +149,8 @@ func listener(network string, address string, paths state.Paths) (net.Listener, 
 	if socketPath == "" {
 		socketPath = filepath.Join(paths.StateDir, "agentfence.sock")
 	}
-	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("remove stale socket: %w", err)
+	if err := removeStaleSocket(socketPath); err != nil {
+		return nil, err
 	}
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
@@ -174,7 +178,76 @@ func WriteTokenFile(path string, token string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create token directory: %w", err)
 	}
-	return os.WriteFile(path, []byte(token+"\n"), 0o600)
+	file, err := os.CreateTemp(filepath.Dir(path), ".agentfence-token-*")
+	if err != nil {
+		return fmt.Errorf("create temporary token file: %w", err)
+	}
+	tempPath := file.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tempPath)
+		}
+	}()
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("chmod temporary token file: %w", err)
+	}
+	if _, err := file.WriteString(token + "\n"); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("write token file: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("sync token file: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close token file: %w", err)
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return fmt.Errorf("replace token file: %w", err)
+	}
+	cleanup = false
+	return nil
+}
+
+func removeStaleSocket(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect unix socket: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || info.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("refusing to remove non-socket path %q", path)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || int64(stat.Uid) != int64(os.Geteuid()) {
+		return fmt.Errorf("refusing to remove socket not owned by current user")
+	}
+	connection, dialErr := net.DialTimeout("unix", path, 250*time.Millisecond)
+	if dialErr == nil {
+		_ = connection.Close()
+		return fmt.Errorf("unix socket is already in use")
+	}
+	if !errors.Is(dialErr, syscall.ECONNREFUSED) && !errors.Is(dialErr, os.ErrNotExist) {
+		return fmt.Errorf("cannot prove unix socket is stale: %w", dialErr)
+	}
+	current, err := os.Lstat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("reinspect unix socket: %w", err)
+	}
+	if !os.SameFile(info, current) {
+		return fmt.Errorf("unix socket changed during startup")
+	}
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("remove stale socket: %w", err)
+	}
+	return nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

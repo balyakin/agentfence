@@ -25,6 +25,7 @@ const (
 	CodeUnauthorized               = "AF_UNAUTHORIZED"
 	CodeDaemonNonLoopbackForbidden = "AF_DAEMON_NON_LOOPBACK_FORBIDDEN"
 	CodeDiskFull                   = "AF_DISK_FULL"
+	CodeBusy                       = "AF_BUSY"
 )
 
 const (

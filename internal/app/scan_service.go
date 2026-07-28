@@ -16,23 +16,25 @@ import (
 )
 
 type ScanService struct {
-	store     ports.Store
-	git       ports.GitRunner
-	policy    ports.PolicyPlanner
-	workspace ports.WorkspaceManager
-	scanners  []ports.Scanner
-	paths     state.Paths
-	clock     ports.Clock
+	store          ports.Store
+	git            ports.GitRunner
+	policy         ports.PolicyPlanner
+	workspace      ports.WorkspaceManager
+	scanners       []ports.Scanner
+	scannerFactory ScannerFactory
+	paths          state.Paths
+	clock          ports.Clock
 }
 
 type ScanServiceDeps struct {
-	Store     ports.Store
-	Git       ports.GitRunner
-	Policy    ports.PolicyPlanner
-	Workspace ports.WorkspaceManager
-	Scanners  []ports.Scanner
-	Paths     state.Paths
-	Clock     ports.Clock
+	Store          ports.Store
+	Git            ports.GitRunner
+	Policy         ports.PolicyPlanner
+	Workspace      ports.WorkspaceManager
+	Scanners       []ports.Scanner
+	ScannerFactory ScannerFactory
+	Paths          state.Paths
+	Clock          ports.Clock
 }
 
 type ScanOnlyRequest struct {
@@ -44,10 +46,14 @@ type ScanOnlyRequest struct {
 }
 
 func NewScanService(deps ScanServiceDeps) (*ScanService, error) {
-	if deps.Git == nil || deps.Policy == nil || deps.Workspace == nil || deps.Clock == nil || len(deps.Scanners) == 0 {
+	if deps.Git == nil || deps.Policy == nil || deps.Workspace == nil || deps.Clock == nil ||
+		len(deps.Scanners) == 0 && deps.ScannerFactory == nil {
 		return nil, errorsx.Wrap(errorsx.CodeInternal, "scan service dependency missing", errorsx.ExitInternal, nil)
 	}
-	return &ScanService{store: deps.Store, git: deps.Git, policy: deps.Policy, workspace: deps.Workspace, scanners: deps.Scanners, paths: deps.Paths, clock: deps.Clock}, nil
+	return &ScanService{
+		store: deps.Store, git: deps.Git, policy: deps.Policy, workspace: deps.Workspace,
+		scanners: deps.Scanners, scannerFactory: deps.ScannerFactory, paths: deps.Paths, clock: deps.Clock,
+	}, nil
 }
 
 func (s *ScanService) Scan(ctx context.Context, req ScanOnlyRequest) (result domain.ScanResult, err error) {
@@ -66,6 +72,13 @@ func (s *ScanService) Scan(ctx context.Context, req ScanOnlyRequest) (result dom
 	cfg, err := config.LoadForRepo(ctx, repoRoot, req.ConfigPath)
 	if err != nil {
 		return domain.ScanResult{}, err
+	}
+	scanners := s.scanners
+	if s.scannerFactory != nil {
+		scanners, err = s.scannerFactory(cfg.Scan)
+		if err != nil {
+			return domain.ScanResult{}, err
+		}
 	}
 	plan, err := s.policy.BuildExposurePlan(ctx, domain.ExposurePlanRequest{
 		RepoPath: repoRoot, IncludeUntracked: req.IncludeUntracked, IncludeDirty: req.IncludeDirty, Config: cfg,
@@ -102,7 +115,16 @@ func (s *ScanService) Scan(ctx context.Context, req ScanOnlyRequest) (result dom
 		}
 		return domain.ScanResult{Status: "clean"}, nil
 	}
-	result, err = scanner.ScanAll(ctx, s.scanners, domain.ScanRequest{RunID: req.RunID, Phase: domain.FindingPhasePreflight, TargetPath: workspaceResult.ShadowPath, RunDir: runDir, TimeoutSeconds: cfg.Scan.TimeoutSeconds}, cfg.Scan.SeverityBlocklist)
+	result, err = scanner.ScanAll(
+		ctx,
+		scanners,
+		domain.ScanRequest{
+			RunID: req.RunID, Phase: domain.FindingPhasePreflight, TargetPath: workspaceResult.ShadowPath,
+			RunDir: runDir, TimeoutSeconds: cfg.Scan.TimeoutSeconds,
+		},
+		cfg.Scan.SeverityBlocklist,
+		cfg.Scan.FailOnFindings,
+	)
 	if err != nil {
 		return domain.ScanResult{}, err
 	}

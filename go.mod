@@ -2,6 +2,8 @@ module github.com/agentfence/agentfence
 
 go 1.26
 
+toolchain go1.26.5
+
 require (
 	github.com/bmatcuk/doublestar/v4 v4.8.1
 	github.com/go-chi/chi/v5 v5.3.0

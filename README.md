@@ -32,7 +32,7 @@ The hard sandbox path is Linux plus `bubblewrap`. Soft mode exists for developme
 
 ## Requirements
 
-- Go 1.26.x
+- Go 1.26.5 or newer in the 1.26 release line
 - Git
 - `gitleaks`
 - Linux hard mode: `bubblewrap`
@@ -174,7 +174,8 @@ apply:
   branch_prefix: "agentfence/"
 ```
 
-Use `exclude_replace: true` when you want your repo-specific exclude list to replace the built-in defaults. Leave it false when you want to add a few project-specific paths on top.
+Use `exclude_replace: true` when you want your repo-specific exclude list to replace optional defaults. Mandatory
+secret exclusions always remain active. Leave it false when you want to add project-specific paths on top.
 
 ## Agents
 
@@ -182,13 +183,24 @@ The built-in presets are thin wrappers around command-line tools:
 
 | Agent | Command | Task delivery |
 | --- | --- | --- |
-| `codex` | `codex --no-interactive` | stdin |
-| `claude` | `claude --non-interactive` | stdin |
+| `codex` | `codex exec` | stdin |
+| `claude` | `claude --print` | stdin |
 | `aider` | `aider` | argv |
-| `opencode` | `opencode` | stdin |
+| `opencode` | `opencode run` | stdin |
 | `generic` | configured by `--command` or config | stdin or argv |
 
 AgentFence does not install or authenticate these tools for you. Keep credentials outside the shadow workspace unless you intentionally add read-only `auth_mounts` in config.
+
+Auth mounts are read-only unless a mount explicitly sets `writable: true`. Interactive agents and Git-history
+scanning are not supported because the shadow workspace deliberately contains neither a TTY nor repository history.
+Soft mode is a development escape hatch, not a security or patch-integrity boundary.
+
+## Configuration Trust
+
+The repository owner is the policy authority for an implicit `.agentfence.yml`. Do not run an unreviewed repository
+with its own policy: it can select an agent command, allow network access, or request soft mode. For an untrusted
+repository, pass a reviewed operator-owned policy with `--config`; an explicitly named missing file is a hard error.
+Mandatory file exclusions and the trusted Gitleaks rules cannot be replaced by repository configuration.
 
 ## Local Daemon
 

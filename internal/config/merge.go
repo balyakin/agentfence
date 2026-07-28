@@ -125,11 +125,14 @@ func Load(ctx context.Context, path string) (Config, error) {
 }
 
 func LoadForRepo(ctx context.Context, repoRoot string, explicitPath string) (Config, error) {
-	path := explicitPath
-	if path == "" {
-		path = filepath.Join(repoRoot, ".agentfence.yml")
+	if explicitPath != "" {
+		data, err := os.ReadFile(explicitPath)
+		if err != nil {
+			return Config{}, fmt.Errorf("read explicit config: %w", err)
+		}
+		return LoadBytes(ctx, data)
 	}
-	return Load(ctx, path)
+	return Load(ctx, filepath.Join(repoRoot, ".agentfence.yml"))
 }
 
 func LoadBytes(ctx context.Context, data []byte) (Config, error) {

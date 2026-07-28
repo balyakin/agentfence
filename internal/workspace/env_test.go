@@ -60,6 +60,52 @@ func TestPlaceholderValueUsesPostgresForBareDsnKeys(t *testing.T) {
 	}
 }
 
+func TestPlaceholderValueClassifiesCommonKeys(t *testing.T) {
+	t.Parallel()
+	tests := map[string]string{
+		"SERVICE_DATABASE_URL": fakeDatabaseURL,
+		"SERVICE_POSTGRES_URL": fakeDatabaseURL,
+		"SERVICE_POSTGRES_DSN": fakeDatabaseURL,
+		"SERVICE_PG_DSN":       fakeDatabaseURL,
+		"SERVICE_SQL_DSN":      fakeDatabaseURL,
+		"HTTP_PORT":            fakePort,
+		"PUBLIC_URL":           fakeHTTPURL,
+		"ENABLE_CACHE":         fakeBool,
+		"DISABLE_CACHE":        fakeBool,
+		"IS_READY":             fakeBool,
+		"HAS_TOKEN":            fakeBool,
+		"APP_ENV":              fakeEnvironmentName,
+		"OTHER_KEY":            fakeValue,
+	}
+	for key, expected := range tests {
+		if value := placeholderValue(key); value != expected {
+			t.Fatalf("%s=%s, want %s", key, value, expected)
+		}
+	}
+}
+
+func TestBuildSanitizedEnvDisabledAndEmpty(t *testing.T) {
+	t.Parallel()
+	result, err := buildSanitizedEnv(t.TempDir(), t.TempDir(), config.SanitizedEnvConfig{})
+	if err != nil {
+		t.Fatalf("disabled env: %v", err)
+	}
+	if len(result.Env) != 0 {
+		t.Fatalf("disabled env generated values: %#v", result)
+	}
+	result, err = buildSanitizedEnv(
+		t.TempDir(),
+		t.TempDir(),
+		config.SanitizedEnvConfig{Enabled: true, ExampleFiles: []string{"missing.example"}},
+	)
+	if err != nil {
+		t.Fatalf("empty env: %v", err)
+	}
+	if len(result.Env) != 0 {
+		t.Fatalf("empty env generated values: %#v", result)
+	}
+}
+
 func TestBuildSanitizedEnvRejectsRuntimeEnvSource(t *testing.T) {
 	t.Parallel()
 	repoRoot := t.TempDir()

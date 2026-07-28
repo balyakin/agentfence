@@ -2,7 +2,6 @@ package ports
 
 import (
 	"context"
-	"os"
 
 	"github.com/agentfence/agentfence/internal/domain"
 )
@@ -15,6 +14,7 @@ type GitRunner interface {
 	TrackedFiles(ctx context.Context, repoRoot string) ([]domain.GitFile, error)
 	UntrackedFiles(ctx context.Context, repoRoot string) ([]domain.WorktreeFile, error)
 	DirtyFiles(ctx context.Context, repoRoot string) ([]domain.WorktreeFile, error)
-	ReadBlob(ctx context.Context, repoRoot string, relativePath string) ([]byte, os.FileMode, error)
+	ReadBlob(ctx context.Context, repoRoot string, relativePath string) ([]byte, error)
 	ApplyPatch(ctx context.Context, req domain.ApplyPatchRequest) error
+	RollbackPatch(ctx context.Context, req domain.ApplyPatchRequest) error
 }

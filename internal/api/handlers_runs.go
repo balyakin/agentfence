@@ -53,16 +53,15 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	run := domain.Run{
 		ID: runID, RepoPath: repoRoot, RunDir: runDir, ShadowPath: filepath.Join(runDir, "shadow"),
 		MetadataPath: filepath.Join(runDir, "shadow_metadata.json"), PatchPath: filepath.Join(runDir, "changes.patch"),
-		AgentName: req.Agent, TaskRedacted: s.redactor.RedactString(req.Task), Status: domain.RunStatusCreated,
+		AgentName: req.Agent, TaskRedacted: "[redacted]", Status: domain.RunStatusCreated,
 		PreScanStatus: "pending", PostScanStatus: "pending", NetworkMode: req.Network, TimeoutSeconds: req.TimeoutSeconds,
 		CreatedAt: now, UpdatedAt: now,
 	}
-	queueCtx := context.WithoutCancel(r.Context())
-	if err := s.store.CreateRun(queueCtx, run); err != nil {
+	if err := s.store.CreateRun(r.Context(), run); err != nil {
 		writeError(w, err)
 		return
 	}
-	if err := s.queue.Enqueue(queueCtx, RunJob{RunID: runID, Req: requestToRun(runID, req)}); err != nil {
+	if err := s.queue.Enqueue(r.Context(), RunJob{RunID: runID, Req: requestToRun(runID, req)}); err != nil {
 		_ = s.store.SetRunFinished(context.WithoutCancel(r.Context()), domain.RunFinishResult{
 			RunID:        runID,
 			Status:       domain.RunStatusFailed,
@@ -88,11 +87,7 @@ func taskFromCreateRunRequest(req CreateRunRequest, repoRoot string) (string, er
 	if filepath.IsAbs(req.TaskFile) {
 		return "", errorsx.Wrap(errorsx.CodeValidation, "task_file must be relative to repo", errorsx.ExitUsage, nil)
 	}
-	taskPath, err := policy.SafeJoin(repoRoot, req.TaskFile)
-	if err != nil {
-		return "", errorsx.Wrap(errorsx.CodeValidation, "invalid task_file path", errorsx.ExitUsage, err)
-	}
-	file, err := os.Open(taskPath)
+	file, err := policy.OpenRegularNoSymlinks(repoRoot, req.TaskFile)
 	if err != nil {
 		return "", errorsx.Wrap(errorsx.CodeValidation, "read task file failed", errorsx.ExitUsage, err)
 	}
@@ -139,7 +134,11 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, runs)
+	responses := make([]RunSummaryResponse, 0, len(runs))
+	for _, run := range runs {
+		responses = append(responses, runSummaryToResponse(run))
+	}
+	writeJSON(w, http.StatusOK, responses)
 }
 
 func (s *Server) handleCancelRun(w http.ResponseWriter, r *http.Request) {

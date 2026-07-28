@@ -17,12 +17,13 @@ import (
 	"github.com/agentfence/agentfence/internal/ports"
 )
 
-//go:embed gitleaks-severity.json
+//go:embed gitleaks-severity.json trusted-gitleaks.toml
 var severityFS embed.FS
 
 const (
 	gitleaksExitClean    = 0
-	gitleaksExitFindings = 1
+	gitleaksExitFindings = 42
+	maxScannerReportSize = 50 << 20
 )
 
 type Gitleaks struct {
@@ -68,12 +69,27 @@ func (g *Gitleaks) Scan(ctx context.Context, req domain.ScanRequest) (domain.Sca
 	if err := report.Close(); err != nil {
 		return domain.ScanResult{}, fmt.Errorf("close gitleaks report: %w", err)
 	}
+	if err := os.Remove(reportPath); err != nil {
+		return domain.ScanResult{}, fmt.Errorf("remove empty gitleaks report: %w", err)
+	}
+	configData, err := severityFS.ReadFile("trusted-gitleaks.toml")
+	if err != nil {
+		return domain.ScanResult{}, fmt.Errorf("read trusted gitleaks config: %w", err)
+	}
+	configPath := filepath.Join(scannerDir, "trusted-gitleaks.toml")
+	if err := os.WriteFile(configPath, configData, 0o600); err != nil {
+		return domain.ScanResult{}, fmt.Errorf("write trusted gitleaks config: %w", err)
+	}
+	defer func() {
+		_ = os.Remove(configPath)
+	}()
 	args := []string{
-		"detect",
-		"--no-git",
-		"--source", req.TargetPath,
+		"dir",
+		"--config", configPath,
+		"--exit-code", fmt.Sprint(gitleaksExitFindings),
 		"--report-format", "json",
 		"--report-path", reportPath,
+		req.TargetPath,
 	}
 	scanCtx := ctx
 	cancel := func() {}
@@ -81,12 +97,23 @@ func (g *Gitleaks) Scan(ctx context.Context, req domain.ScanRequest) (domain.Sca
 		scanCtx, cancel = context.WithTimeout(ctx, time.Duration(req.TimeoutSeconds)*time.Second)
 	}
 	defer cancel()
-	result, runErr := g.runner.Run(scanCtx, execx.ProcessRequest{Executable: "gitleaks", Args: args})
+	result, runErr := g.runner.Run(scanCtx, execx.ProcessRequest{
+		Executable: "gitleaks",
+		Args:       args,
+		Env:        trustedScannerEnv(),
+	})
 	if runErr != nil {
 		return domain.ScanResult{}, fmt.Errorf("run gitleaks: %w", runErr)
 	}
 	if result.ExitCode != gitleaksExitClean && result.ExitCode != gitleaksExitFindings {
 		return domain.ScanResult{}, fmt.Errorf("gitleaks exited with code %d", result.ExitCode)
+	}
+	info, statErr := os.Lstat(reportPath)
+	if statErr != nil {
+		return domain.ScanResult{}, fmt.Errorf("stat gitleaks report: %w", statErr)
+	}
+	if !info.Mode().IsRegular() || info.Size() == 0 || info.Size() > maxScannerReportSize {
+		return domain.ScanResult{}, fmt.Errorf("gitleaks report is missing, invalid, or too large")
 	}
 	data, readErr := os.ReadFile(reportPath)
 	if readErr != nil {
@@ -95,6 +122,10 @@ func (g *Gitleaks) Scan(ctx context.Context, req domain.ScanRequest) (domain.Sca
 	findings, rawSecrets, err := ParseGitleaksReport(data, req.RunID, req.Phase, g.Name(), g.clock.Now())
 	if err != nil {
 		return domain.ScanResult{}, err
+	}
+	hasFindings := len(findings) > 0
+	if hasFindings != (result.ExitCode == gitleaksExitFindings) {
+		return domain.ScanResult{}, fmt.Errorf("gitleaks report does not match exit code %d", result.ExitCode)
 	}
 	sanitized, err := SanitizeGitleaksReport(data)
 	if err != nil {
@@ -147,7 +178,7 @@ func ParseGitleaksReport(data []byte, runID string, phase domain.FindingPhase, e
 		}
 		severity := severityMap[item.RuleID]
 		if severity == "" {
-			return nil, nil, fmt.Errorf("gitleaks severity missing for rule %q", item.RuleID)
+			severity = domain.SeverityHigh
 		}
 		findings = append(findings, domain.Finding{
 			RunID:          runID,
@@ -166,6 +197,14 @@ func ParseGitleaksReport(data []byte, runID string, phase domain.FindingPhase, e
 		})
 	}
 	return findings, rawSecrets, nil
+}
+
+func trustedScannerEnv() []string {
+	return []string{
+		"HOME=",
+		"LC_ALL=C",
+		"PATH=" + os.Getenv("PATH"),
+	}
 }
 
 func SanitizeGitleaksReport(data []byte) ([]byte, error) {

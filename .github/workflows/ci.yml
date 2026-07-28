@@ -8,21 +8,24 @@ jobs:
   linux:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
-          go-version: '1.26.4'
+          go-version: '1.26.5'
+      - run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - run: go install github.com/zricethezav/gitleaks/v8@v8.30.1
+      - run: go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
       - run: test -z "$(gofmt -l cmd internal pkg)"
       - run: go vet ./...
-      - uses: golangci/golangci-lint-action@v9
+      - uses: golangci/golangci-lint-action@db9de0fc1a667e1a49d2291a1a042dff081d78f6
         with:
           version: v2.12.2
           args: ./...
-      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
       - run: govulncheck ./...
       - run: go test ./...
       - run: go test -race ./...
       - run: go test -run TestLeakLab ./...
+      - run: ./scripts/check-coverage.sh
       - run: go build -trimpath ./cmd/agentfence
       - run: GOOS=linux GOARCH=amd64 go build -trimpath ./cmd/agentfence
       - run: GOOS=linux GOARCH=arm64 go build -trimpath ./cmd/agentfence
@@ -30,10 +33,10 @@ jobs:
   macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
-          go-version: '1.26.4'
+          go-version: '1.26.5'
       - run: test -z "$(gofmt -l cmd internal pkg)"
       - run: go vet ./...
       - run: go test ./...

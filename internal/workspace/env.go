@@ -54,9 +54,6 @@ func buildSanitizedEnv(repoRoot string, shadowRoot string, cfg config.SanitizedE
 	if err := writeEnvFile(envPath, env); err != nil {
 		return sanitizedEnvResult{}, err
 	}
-	if err := appendGitInfoExclude(shadowRoot, generatedEnvPath); err != nil {
-		return sanitizedEnvResult{}, err
-	}
 	return sanitizedEnvResult{
 		Env:              env,
 		Keys:             keys,
@@ -238,32 +235,6 @@ func writeEnvFile(path string, env []string) error {
 	}
 	if err := os.Chmod(path, 0o600); err != nil {
 		return fmt.Errorf("chmod sanitized env: %w", err)
-	}
-	return nil
-}
-
-func appendGitInfoExclude(shadowRoot string, relativePath string) error {
-	infoDir := filepath.Join(shadowRoot, ".git", "info")
-	if _, err := os.Stat(infoDir); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("stat git info: %w", err)
-	}
-	excludePath := filepath.Join(infoDir, "exclude")
-	file, err := os.OpenFile(excludePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	if err != nil {
-		return fmt.Errorf("open git exclude: %w", err)
-	}
-	if _, err := file.WriteString("\n/" + filepath.ToSlash(relativePath) + "\n"); err != nil {
-		closeErr := file.Close()
-		if closeErr != nil {
-			return fmt.Errorf("write git exclude: %w; close git exclude: %w", err, closeErr)
-		}
-		return fmt.Errorf("write git exclude: %w", err)
-	}
-	if err := file.Close(); err != nil {
-		return fmt.Errorf("close git exclude: %w", err)
 	}
 	return nil
 }

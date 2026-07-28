@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -45,6 +46,35 @@ func TestExcludeReplace(t *testing.T) {
 	}
 	if !contains(cfg.Workspace.Exclude, "build/**") {
 		t.Fatalf("user exclude missing")
+	}
+}
+
+func TestExplicitMissingConfigFails(t *testing.T) {
+	t.Parallel()
+	_, err := LoadForRepo(context.Background(), t.TempDir(), filepath.Join(t.TempDir(), "missing.yml"))
+	if err == nil {
+		t.Fatalf("explicit missing config was accepted")
+	}
+}
+
+func TestImplicitMissingConfigUsesDefaults(t *testing.T) {
+	t.Parallel()
+	cfg, err := LoadForRepo(context.Background(), t.TempDir(), "")
+	if err != nil {
+		t.Fatalf("implicit config: %v", err)
+	}
+	if cfg.Version != 1 {
+		t.Fatalf("version=%d", cfg.Version)
+	}
+}
+
+func TestEmptySeverityBlocklistFails(t *testing.T) {
+	t.Parallel()
+	_, err := LoadBytes(context.Background(), []byte(
+		"version: 1\nscan:\n  severity_blocklist: []\n",
+	))
+	if err == nil {
+		t.Fatalf("empty severity blocklist was accepted")
 	}
 }
 

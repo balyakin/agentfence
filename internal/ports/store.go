@@ -12,6 +12,12 @@ type Store interface {
 	ResolveLatestRun(ctx context.Context, repoPath string) (domain.Run, error)
 	ListRuns(ctx context.Context, filter domain.RunFilter) ([]domain.RunSummary, error)
 	SetRunStatus(ctx context.Context, runID string, status domain.RunStatus) error
+	TransitionRunStatus(
+		ctx context.Context,
+		runID string,
+		from []domain.RunStatus,
+		to domain.RunStatus,
+	) (bool, error)
 	SetRunStarted(ctx context.Context, runID string) error
 	SetRunFinished(ctx context.Context, result domain.RunFinishResult) error
 	SetScanStatus(ctx context.Context, runID string, preStatus string, postStatus string) error

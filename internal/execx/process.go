@@ -33,6 +33,8 @@ type ProcessRunner struct {
 	commandHook func(*exec.Cmd)
 }
 
+const hardKillWait = 5 * time.Second
+
 func NewProcessRunner(logger *slog.Logger) *ProcessRunner {
 	return &ProcessRunner{logger: logger, killGrace: 5 * time.Second}
 }
@@ -62,8 +64,12 @@ func (r *ProcessRunner) Run(ctx context.Context, req ProcessRequest) (ProcessRes
 	pgid, err := syscall.Getpgid(cmd.Process.Pid)
 	if err != nil {
 		_ = cmd.Process.Kill()
-		<-waitCh
-		return ProcessResult{}, fmt.Errorf("get process group: %w", err)
+		select {
+		case <-waitCh:
+			return ProcessResult{}, fmt.Errorf("get process group: %w", err)
+		case <-time.After(hardKillWait):
+			return ProcessResult{}, fmt.Errorf("get process group: %w; process did not stop", err)
+		}
 	}
 
 	select {
@@ -80,8 +86,16 @@ func (r *ProcessRunner) Run(ctx context.Context, req ProcessRequest) (ProcessRes
 			if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil && r.logger != nil {
 				r.logger.ErrorContext(ctx, "send SIGKILL failed", slog.Int("pgid", pgid), slog.Any("error", err))
 			}
-			err := <-waitCh
-			return ProcessResult{ExitCode: exitCode(err), StartedAt: started, FinishedAt: time.Now().UTC()}, ctx.Err()
+			select {
+			case err := <-waitCh:
+				return ProcessResult{
+					ExitCode: exitCode(err), StartedAt: started, FinishedAt: time.Now().UTC(),
+				}, ctx.Err()
+			case <-time.After(hardKillWait):
+				return ProcessResult{
+					ExitCode: -1, StartedAt: started, FinishedAt: time.Now().UTC(),
+				}, ctx.Err()
+			}
 		}
 	}
 }
