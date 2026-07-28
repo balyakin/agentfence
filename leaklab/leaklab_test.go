@@ -2,6 +2,7 @@ package leaklab
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"testing"
 )
+
+const fakeAgentSandboxPath = "/agent-home/fake-agent.sh"
 
 func TestLeakLab(t *testing.T) {
 	if runtime.GOOS != "linux" {
@@ -25,7 +28,22 @@ func TestLeakLab(t *testing.T) {
 
 	cleanRepo := createLeakLabRepo(t)
 	cleanEnv := leakLabEnv(t, "")
-	runOut, runErr := runAgentFence(t, cleanRepo, cleanEnv, bin, "run", "generic", "--command", fakeAgentPath(t), "--task", "probe", "--timeout", "30")
+	runOut, runErr := runAgentFence(
+		t,
+		cleanRepo,
+		cleanEnv,
+		bin,
+		"run",
+		"generic",
+		"--command",
+		"/bin/sh",
+		"--agent-arg",
+		fakeAgentSandboxPath,
+		"--task",
+		"probe",
+		"--timeout",
+		"30",
+	)
 	if runErr != nil {
 		t.Fatalf("clean run failed: %v\n%s", runErr, runOut)
 	}
@@ -46,7 +64,22 @@ func TestLeakLab(t *testing.T) {
 
 	secretRepo := createLeakLabRepo(t)
 	secretEnv := leakLabEnv(t, "1")
-	secretOut, secretErr := runAgentFence(t, secretRepo, secretEnv, bin, "run", "generic", "--command", fakeAgentPath(t), "--task", "probe", "--timeout", "30")
+	secretOut, secretErr := runAgentFence(
+		t,
+		secretRepo,
+		secretEnv,
+		bin,
+		"run",
+		"generic",
+		"--command",
+		"/bin/sh",
+		"--agent-arg",
+		fakeAgentSandboxPath,
+		"--task",
+		"probe",
+		"--timeout",
+		"30",
+	)
 	if secretErr == nil {
 		t.Fatalf("secret injection run unexpectedly succeeded:\n%s", secretOut)
 	}
@@ -92,7 +125,12 @@ func createLeakLabRepo(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(repo, ".env"), []byte("LOCAL_ENV_SECRET=should-not-copy\n"), 0o600); err != nil {
 		t.Fatalf("write env: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, ".agentfence.yml"), []byte("version: 1\nagent:\n  env_allowlist:\n    - AF_INJECT_SECRET\n"), 0o600); err != nil {
+	configData := fmt.Sprintf(
+		"version: 1\nagent:\n  env_allowlist:\n    - AF_INJECT_SECRET\n  auth_mounts:\n    - host_path: %q\n      sandbox_path: %s\n",
+		fakeAgentPath(t),
+		fakeAgentSandboxPath,
+	)
+	if err := os.WriteFile(filepath.Join(repo, ".agentfence.yml"), []byte(configData), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 	git(t, repo, "add", "README.md", ".env", ".agentfence.yml")
