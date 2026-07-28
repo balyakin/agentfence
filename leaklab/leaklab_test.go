@@ -177,7 +177,30 @@ func runAgentFence(t *testing.T, dir string, env []string, bin string, args ...s
 	cmd.Stdout = &output
 	cmd.Stderr = &output
 	err := cmd.Run()
+	if err != nil {
+		appendRunLogs(&output, env)
+	}
 	return output.String(), err
+}
+
+func appendRunLogs(output *bytes.Buffer, env []string) {
+	cacheDir := ""
+	for _, value := range env {
+		if path, ok := strings.CutPrefix(value, "XDG_CACHE_HOME="); ok {
+			cacheDir = path
+			break
+		}
+	}
+	if cacheDir == "" {
+		return
+	}
+	paths, _ := filepath.Glob(filepath.Join(cacheDir, "agentfence", "runs", "*", "logs", "*.log"))
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err == nil && len(data) > 0 {
+			_, _ = fmt.Fprintf(output, "\n%s:\n%s", filepath.Base(path), data)
+		}
+	}
 }
 
 func parseRunID(t *testing.T, output string) string {
