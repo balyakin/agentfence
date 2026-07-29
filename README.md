@@ -2,6 +2,15 @@
 
 Run AI coding agents without handing them your repo, your home directory, or your secrets.
 
+[![CI][badge-ci]][ci]
+[![Go][badge-go]][go]
+[![Platforms][badge-platforms]][ci]
+[![Coverage gate][badge-coverage]][ci]
+[![Checks][badge-checks]][ci]
+[![Race detector][badge-race]][ci]
+[![Leak lab][badge-leaklab]][leaklab]
+[![License: MIT][badge-license]][license]
+
 AgentFence is a local security tool for the moment when you want help from Codex, Claude, Aider, OpenCode, or a custom agent, but you do not want that process to read everything on your machine. It creates a temporary shadow workspace, runs scanners before and after the agent, keeps the patch behind review, and only changes your real checkout when you explicitly apply the result.
 
 ![AgentFence terminal preview](docs/screenshot.svg)
@@ -303,3 +312,16 @@ AF_INJECT_SECRET=1 agentfence run generic --command ./leaklab/fake-agent.sh --ta
 ```
 
 This project was developed with AI assistance and is maintained by the author.
+
+[badge-ci]: https://github.com/balyakin/agentfence/actions/workflows/ci.yml/badge.svg
+[badge-go]: https://img.shields.io/badge/go-1.26.5-blue
+[badge-platforms]: https://img.shields.io/badge/platforms-linux%20%7C%20macOS-blue
+[badge-coverage]: https://img.shields.io/badge/coverage%20gate-70%25%20overall%20%7C%2080%25%20core-brightgreen
+[badge-checks]: https://img.shields.io/badge/checks-gofmt%20%7C%20vet%20%7C%20lint%20%7C%20govulncheck-brightgreen
+[badge-race]: https://img.shields.io/badge/race-detector-brightgreen
+[badge-leaklab]: https://img.shields.io/badge/security-leak%20lab-brightgreen
+[badge-license]: https://img.shields.io/badge/license-MIT-green.svg
+[ci]: https://github.com/balyakin/agentfence/actions/workflows/ci.yml
+[go]: https://github.com/balyakin/agentfence/blob/main/go.mod
+[leaklab]: https://github.com/balyakin/agentfence/blob/main/leaklab/README.md
+[license]: https://github.com/balyakin/agentfence/blob/main/LICENSE
